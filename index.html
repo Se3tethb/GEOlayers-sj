@@ -62,8 +62,63 @@
         </section>
 
         <section>
+          <h3>قيم الكاميرا الدقيقة</h3>
+          <div class="grid3">
+            <label>خط العرض<input id="vLat" type="number" step="0.0001"></label>
+            <label>خط الطول<input id="vLng" type="number" step="0.0001"></label>
+            <label>الزوم<input id="vZoom" type="number" step="0.05"></label>
+            <label>الدوران (Bearing)<input id="vBearing" type="number" step="1"></label>
+            <label>الميل (Pitch)<input id="vPitch" type="number" step="1" min="0" max="85"></label>
+            <label>ميلان الأفق (Roll)<input id="vRoll" type="number" step="1" min="-45" max="45" value="0"></label>
+          </div>
+          <div class="grid2" style="margin-top:6px">
+            <label>اهتزاز الكاميرا (px)<input id="vShake" type="number" step="1" min="0" max="80" value="0"></label>
+            <button id="btnShake" style="align-self:end">طبّق الاهتزاز</button>
+          </div>
+          <p class="hint">غيّر أي رقم لتتحرك المعاينة فوراً، ثم ◆ كيفريم. ميلان الأفق (Roll) يُكتب مع الكيفريم ويظهر في المعاينة.</p>
+        </section>
+
+        <section>
+          <h3>حركات كاميرا جاهزة <small>(تبدأ من رأس التشغيل)</small></h3>
+          <div class="grid2">
+            <label>الحركة
+              <select id="moveType">
+                <option value="orbit">دوران حول المكان (Orbit)</option>
+                <option value="pushIn">اقتراب (Push in)</option>
+                <option value="pullOut">ابتعاد (Pull out)</option>
+                <option value="lowAngle">زاوية منخفضة — الكاميرا تنزل للأفق</option>
+                <option value="topDown">العودة لمنظر علوي</option>
+                <option value="craneUp">رفع الكاميرا مع ابتعاد (Crane up)</option>
+                <option value="spiral">حلزون: دوران مع اقتراب</option>
+                <option value="flyOver">طيران منخفض فوق المكان</option>
+                <option value="panLeft">تحريك لليسار</option>
+                <option value="panRight">تحريك لليمين</option>
+                <option value="panUp">تحريك للأعلى</option>
+                <option value="panDown">تحريك للأسفل</option>
+                <option value="dutch">ميلان الأفق (Dutch angle)</option>
+                <option value="reveal">كشف: من قريب ومائل إلى منظر كامل</option>
+              </select>
+            </label>
+            <label>المقدار<input id="moveAmt" type="number" value="90" step="5" title="درجات للدوران والميل، مستويات زوم للاقتراب، نسبة من الشاشة للتحريك"></label>
+            <label>المدة (ث)<input id="moveDur" type="number" value="4" step="0.5" min="0.2"></label>
+            <label>التسارع
+              <select id="moveEase"><option value="ease">ناعم (Easy Ease)</option><option value="linear">خطي ثابت</option></select>
+            </label>
+          </div>
+          <div class="row" style="margin-top:6px">
+            <button id="btnMove" class="accent">أضف الحركة</button>
+            <button id="btnMovePreview">معاينة</button>
+          </div>
+          <p class="hint" id="moveHint"></p>
+        </section>
+
+        <section>
           <h3>تثبيت على الخريطة (Pin)</h3>
           <button id="btnPin">ثبّت الطبقات المحددة في مكانها على الخريطة</button>
+          <div class="fbtns" style="margin-top:4px">
+            <button id="btnAnchor" class="mini">اربط المحدد بالمرساة (3D)</button>
+            <button id="btnDrawLayer" class="mini">طبقة رسم بالقلم ثابتة على الخريطة</button>
+          </div>
           <p class="hint">حدّد الطبقات في AE (صورة، فيديو، نص…) ثم اضغط: تبقى في مكانها الجغرافي وتتحرك مع الخريطة. يضيف: Pin Latitude / Longitude / Offset X / Offset Y / Scale With Map. للصور والفيديو يُفعَّل Scale With Map تلقائياً. لطبقات 3D: اجعلها Parent لـ «GEO Map Anchor».</p>
         </section>
       </div>
@@ -87,8 +142,18 @@
         <section>
           <h3>ارسم شكلاً على الخريطة</h3>
           <div class="row">
-            <select id="drawKind"><option value="Polygon">منطقة مغلقة</option><option value="LineString">خط / مسار</option></select>
+            <select id="drawKind">
+              <option value="Polygon">منطقة مغلقة</option>
+              <option value="LineString">خط / مسار</option>
+              <option value="Arrow">سهم (نقرة البداية ثم النهاية)</option>
+              <option value="Circle">دائرة (نقرة المركز ثم الحافة)</option>
+              <option value="Point">نقطة / مكان</option>
+            </select>
             <button id="btnDraw">ابدأ الرسم</button>
+          </div>
+          <div class="grid2" style="margin-top:6px">
+            <label>نصف قطر الدائرة (كم)<input id="circleKm" type="number" value="50" step="5" min="0.1"></label>
+            <button id="btnCircle" style="align-self:end">دائرة حول المحدد / المركز</button>
           </div>
           <p class="hint">انقر نقاطاً على الخريطة، نقرة مزدوجة للإنهاء، Esc للإلغاء. للبحث بالنقر: Alt + نقرة تعرض الدولة والمحافظة والمدينة في تلك النقطة.</p>
         </section>
@@ -104,6 +169,23 @@
             <label class="check"><input id="keepTilt" type="checkbox" checked> احتفظ بالميل والدوران</label>
           </div>
           <p class="hint">«حرّك الكاميرا إليه» يبدأ من رأس التشغيل، ثم ينقل رأس التشغيل لنهاية الحركة، فتتسلسل الدول واحدة بعد الأخرى.</p>
+        </section>
+        <section>
+          <h3>شكل الأسماء والعلامات</h3>
+          <div class="grid3">
+            <label>النمط
+              <select id="lblStyle"><option value="plain">نص بحدّ أسود</option><option value="box">نص في صندوق ملوّن (أسلوب الجزيرة)</option><option value="tag">نص مع خط إشارة</option></select>
+            </label>
+            <label>العلامة
+              <select id="lblMarker"><option value="auto">تلقائي</option><option value="none">بدون</option><option value="dot">نقطة</option><option value="pulse">نقطة نابضة</option></select>
+            </label>
+            <label>لون الصندوق<input id="lblBox" type="color" value="#b5121b"></label>
+          </div>
+        </section>
+        <section>
+          <h3>المفضلة</h3>
+          <ul id="favs" class="list"></ul>
+          <p class="hint">النجمة ☆ في أي معلم تحفظه هنا لكل المشاريع القادمة.</p>
         </section>
         <section>
           <h3>سهم بين مكانين <small>(أضف المكانين للمتصفح أولاً)</small></h3>

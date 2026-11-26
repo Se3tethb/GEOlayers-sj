@@ -365,7 +365,80 @@
       inT: [[0, 0], [round3(c2[0]), round3(c2[1])]], outT: [[round3(c1[0]), round3(c1[1])], [0, 0]] };
   }
 
+  // ---------- circles, paths, camera moves ----------
+  var R_EARTH = 6371.0088; // km
+
+  /* geodesic circle (true km on the ground) as a GeoJSON Polygon */
+  function circlePolygon(lng, lat, radiusKm, n) {
+    n = n || 128;
+    var d = radiusKm / R_EARTH, la = lat * Math.PI / 180, lo = lng * Math.PI / 180, ring = [];
+    for (var i = 0; i <= n; i++) {
+      var b = 2 * Math.PI * (i % n) / n;
+      var la2 = Math.asin(Math.sin(la) * Math.cos(d) + Math.cos(la) * Math.sin(d) * Math.cos(b));
+      var lo2 = lo + Math.atan2(Math.sin(b) * Math.sin(d) * Math.cos(la), Math.cos(d) - Math.sin(la) * Math.sin(la2));
+      ring.push([lo2 * 180 / Math.PI, la2 * 180 / Math.PI]);
+    }
+    return { type: 'Polygon', coordinates: [ring] };
+  }
+  function haversineKm(a, b) {
+    var la1 = a[1] * Math.PI / 180, la2 = b[1] * Math.PI / 180, dla = la2 - la1, dlo = (b[0] - a[0]) * Math.PI / 180;
+    var h = Math.sin(dla / 2) * Math.sin(dla / 2) + Math.cos(la1) * Math.cos(la2) * Math.sin(dlo / 2) * Math.sin(dlo / 2);
+    return 2 * R_EARTH * Math.asin(Math.min(1, Math.sqrt(h)));
+  }
+  /* compass bearing a -> b in degrees (0 = north, clockwise), as MapLibre's bearing */
+  function bearingDeg(a, b) {
+    var la1 = a[1] * Math.PI / 180, la2 = b[1] * Math.PI / 180, dlo = (b[0] - a[0]) * Math.PI / 180;
+    var y = Math.sin(dlo) * Math.cos(la2), x = Math.cos(la1) * Math.sin(la2) - Math.sin(la1) * Math.cos(la2) * Math.cos(dlo);
+    return (Math.atan2(y, x) * 180 / Math.PI + 360) % 360;
+  }
+  /* longest line of a geometry (for "camera along path") */
+  function mainLine(geom) {
+    var best = null, bestLen = -1;
+    function consider(l) {
+      var len = 0;
+      for (var i = 1; i < l.length; i++) len += haversineKm(l[i - 1], l[i]);
+      if (len > bestLen) { bestLen = len; best = l; }
+    }
+    (function walk(g) {
+      if (!g) return;
+      if (g.type === 'LineString') consider(g.coordinates);
+      else if (g.type === 'MultiLineString') g.coordinates.forEach(consider);
+      else if (g.type === 'Polygon') consider(g.coordinates[0]);
+      else if (g.type === 'MultiPolygon') g.coordinates.forEach(function (p) { consider(p[0]); });
+      else if (g.type === 'GeometryCollection') g.geometries.forEach(walk);
+    })(geom);
+    return best;
+  }
+  /* n+1 evenly spaced points along a line with the travel bearing at each (smoothed) */
+  function samplePath(line, n) {
+    var cum = [0], i;
+    for (i = 1; i < line.length; i++) cum.push(cum[i - 1] + haversineKm(line[i - 1], line[i]));
+    var total = cum[cum.length - 1], out = [], j = 1;
+    function at(d) {
+      while (j < cum.length - 1 && cum[j] < d) j++;
+      var seg = cum[j] - cum[j - 1], u = seg > 0 ? (d - cum[j - 1]) / seg : 0;
+      return [line[j - 1][0] + (line[j][0] - line[j - 1][0]) * u, line[j - 1][1] + (line[j][1] - line[j - 1][1]) * u];
+    }
+    for (i = 0; i <= n; i++) out.push({ p: at(total * i / n) });
+    var look = Math.max(1, Math.round(n / 25));
+    for (i = 0; i <= n; i++) {
+      var a = out[Math.max(0, i - look)].p, b = out[Math.min(n, i + look)].p;
+      out[i].bearing = bearingDeg(a, b);
+    }
+    // unwrap so the camera never spins the long way round
+    for (i = 1; i <= n; i++) out[i].bearing = out[i - 1].bearing + shortestAngle(out[i - 1].bearing, out[i].bearing);
+    return { points: out, km: total };
+  }
+  /* move the centre by (dx, dy) screen widths/heights at a zoom and bearing (dx right, dy down) */
+  function panCenter(lng, lat, zoom, bearing, dxPx, dyPx) {
+    var m = lngLatToMerc(lng, lat), ws = worldSize(zoom), b = bearing * Math.PI / 180;
+    var wx = dxPx * Math.cos(b) - dyPx * Math.sin(b), wy = dxPx * Math.sin(b) + dyPx * Math.cos(b);
+    return mercToLngLat(m[0] + wx / ws, m[1] + wy / ws);
+  }
+
   var api = {
+    circlePolygon: circlePolygon, haversineKm: haversineKm, bearingDeg: bearingDeg, mainLine: mainLine,
+    samplePath: samplePath, panCenter: panCenter,
     trimGeometry: trimGeometry, planFromViews: planFromViews, fitZoom: fitZoom, geomBBox: geomBBox, arcPath: arcPath,
     TILE: TILE, lngLatToMerc: lngLatToMerc, mercToLngLat: mercToLngLat, worldSize: worldSize,
     EASE: EASE, shortestAngle: shortestAngle, interpSegment: interpSegment, viewAt: viewAt,

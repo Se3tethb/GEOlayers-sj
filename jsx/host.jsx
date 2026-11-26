@@ -131,6 +131,58 @@ function geoEase(p, i) {
     p.setTemporalEaseAtKey(i, [e], [e]);
 }
 
+var GEO_CONTROLS = ["Latitude", "Longitude", "Zoom", "Bearing", "Pitch", "Roll", "Shake"];
+var GEO_FIELDS = ["lat", "lng", "zoom", "bearing", "pitch", "roll", "shake"];
+
+// camera = MapLibre model: distance D = h/2/tan(fov/2), orbits the centre by Pitch; Roll tilts the horizon;
+// Shake adds smooth noise (px) to the camera and its point of interest
+function geoCameraExpressions(main, fovDeg) {
+    var w = main.width, h = main.height;
+    var D = h / 2 / Math.tan((fovDeg || 36.8699) / 2 * Math.PI / 180);
+    var cam = main.layer("GEO Camera");
+    cam.property("ADBE Camera Options Group").property("ADBE Camera Zoom").setValue(D);
+    var SH = 'var s=' + GEO_CTRL + '.effect("Shake")(1).value;var nx=s?noise(time*1.7)*s:0,ny=s?noise(time*1.9+37.1)*s:0;';
+    var ctg = cam.property("ADBE Transform Group");
+    ctg.property("ADBE Anchor Point").expression = SH + '[' + (w / 2) + '+nx*0.6,' + (h / 2) + '+ny*0.6,0];';   // point of interest
+    ctg.property("ADBE Position").expression = SH +
+        'var p=' + GEO_CTRL + '.effect("Pitch")(1).value*Math.PI/180;var D=' + geoNum(D) + ';' +
+        '[' + (w / 2) + '+nx,' + (h / 2) + '+D*Math.sin(p)+ny,-D*Math.cos(p)];';
+    ctg.property("ADBE Rotate Z").expression = GEO_CTRL + '.effect("Roll")(1).value';
+}
+
+// comps made by an older GeoMotion lack Roll/Shake: add them and refresh the camera
+function geoUpgrade(jobPath) {
+    try {
+        var J = geoReadJob(jobPath);
+        var M = geoMapFor(J), c = M.comp;
+        app.beginUndoGroup("GeoMotion: upgrade");
+        var fx = function () { return geoControls(c).property("ADBE Effect Parade"); };
+        var added = 0;
+        for (var i = 0; i < GEO_CONTROLS.length; i++) {
+            if (!fx().property(GEO_CONTROLS[i])) { fx().addProperty("ADBE Slider Control").name = GEO_CONTROLS[i]; added++; }
+        }
+        geoCameraExpressions(c, 36.8699);
+        app.endUndoGroup();
+        return "OK|" + added;
+    } catch (e) { try { app.endUndoGroup(); } catch (e3) {} return geoErr("", e); }
+}
+
+// set plain control values (e.g. Shake); keyed controls get a key at the playhead
+function geoSetValues(jobPath) {
+    try {
+        var J = geoReadJob(jobPath);
+        var M = geoMapFor(J), ctrl = geoControls(M.comp);
+        app.beginUndoGroup("GeoMotion: set values");
+        for (var k in J.values) {
+            if (!J.values.hasOwnProperty(k)) continue;
+            var p = geoSlider(ctrl, k);
+            if (p.numKeys > 0) p.setValueAtTime(M.comp.time, J.values[k]); else p.setValue(J.values[k]);
+        }
+        app.endUndoGroup();
+        return "OK|";
+    } catch (e) { try { app.endUndoGroup(); } catch (e3) {} return geoErr("", e); }
+}
+
 // ---------- create the map comp ----------
 function geoCreateMapComp(jobPath) {
     var step = "read job";
@@ -156,8 +208,8 @@ function geoCreateMapComp(jobPath) {
         step = "controls";
         var ctrl = main.layers.addNull(C.duration);
         ctrl.name = "GEO Map Controls";
-        var names = ["Latitude", "Longitude", "Zoom", "Bearing", "Pitch"];
-        var vals = [J.view.lat, J.view.lng, J.view.zoom, J.view.bearing, J.view.pitch];
+        var names = GEO_CONTROLS;
+        var vals = [J.view.lat, J.view.lng, J.view.zoom, J.view.bearing, J.view.pitch, J.view.roll || 0, 0];
         var i;
         for (i = 0; i < names.length; i++) main.layer("GEO Map Controls").property("ADBE Effect Parade").addProperty("ADBE Slider Control").name = names[i];
         for (i = 0; i < names.length; i++) geoSlider(main.layer("GEO Map Controls"), names[i]).setValue(vals[i]);
@@ -186,14 +238,8 @@ function geoCreateMapComp(jobPath) {
         anc.comment = "Parent 3D layers here to stick them to the map.";
 
         step = "camera";
-        var D = C.h / 2 / Math.tan(J.fovDeg / 2 * Math.PI / 180);
-        var cam = main.layers.addCamera("GEO Camera", [C.w / 2, C.h / 2]);
-        cam.property("ADBE Camera Options Group").property("ADBE Camera Zoom").setValue(D);
-        var ctg = cam.property("ADBE Transform Group");
-        ctg.property("ADBE Anchor Point").setValue([C.w / 2, C.h / 2, 0]);            // point of interest = map centre
-        ctg.property("ADBE Position").expression =
-            'var p=' + GEO_CTRL + '.effect("Pitch")(1).value*Math.PI/180;var D=' + geoNum(D) + ';' +
-            '[' + (C.w / 2) + ',' + (C.h / 2) + '+D*Math.sin(p),-D*Math.cos(p)];';
+        main.layers.addCamera("GEO Camera", [C.w / 2, C.h / 2]);
+        geoCameraExpressions(main, J.fovDeg);
 
         main.layer("GEO World").moveToEnd();
         app.endUndoGroup();
@@ -212,6 +258,9 @@ function geoGetState() {
         if (!M) return "OK|{\"map\":false}";
         var c = M.comp, ctrl = geoControls(c);
         var names = ["Latitude", "Longitude", "Zoom", "Bearing", "Pitch"], v = [], i;
+        var fxp = ctrl.property("ADBE Effect Parade"), hasRoll = !!fxp.property("Roll") && !!fxp.property("Shake");
+        var roll = hasRoll ? geoNum(geoSlider(ctrl, "Roll").valueAtTime(c.time, false)) : 0;
+        var shake = hasRoll ? geoNum(geoSlider(ctrl, "Shake").valueAtTime(c.time, false)) : 0;
         // effective centre (what the anchor expression computes) so the panel matches AE exactly
         var a = c.layer("GEO World").property("ADBE Transform Group").property("ADBE Anchor Point").valueAtTime(c.time, false);
         var ws = GEO_TILE * Math.pow(2, M.zr);
@@ -222,7 +271,7 @@ function geoGetState() {
                ",\"style\":\"" + geoEsc(M.style) + "\",\"name\":\"" + geoEsc(c.name) + "\",\"time\":" + geoNum(c.time) +
                ",\"w\":" + c.width + ",\"h\":" + c.height + ",\"fps\":" + c.frameRate + ",\"duration\":" + geoNum(c.duration) +
                ",\"mx\":" + geoNum((a[0] + M.x0) / ws) + ",\"my\":" + geoNum((a[1] + M.y0) / ws) +
-               ",\"lat\":" + v[0] + ",\"lng\":" + v[1] + ",\"zoom\":" + v[2] + ",\"bearing\":" + v[3] + ",\"pitch\":" + v[4] +
+               ",\"lat\":" + v[0] + ",\"lng\":" + v[1] + ",\"zoom\":" + v[2] + ",\"bearing\":" + v[3] + ",\"pitch\":" + v[4] + ",\"roll\":" + roll + ",\"shake\":" + shake + ",\"v2\":" + (hasRoll ? "true" : "false") +
                ",\"keys\":[" + keys.join(",") + "]}";
     } catch (e) { return geoErr("", e); }
 }
@@ -235,14 +284,19 @@ function geoSetKeys(jobPath) {
         var M = geoMapFor(J);
         var c = M.comp, ctrl = geoControls(c);
         app.beginUndoGroup("GeoMotion: keyframe");
-        var names = ["Latitude", "Longitude", "Zoom", "Bearing", "Pitch"], fields = ["lat", "lng", "zoom", "bearing", "pitch"];
+        var names = GEO_CONTROLS.slice(0, 6), fields = GEO_FIELDS.slice(0, 6);
         var base = c.time, i, k, n;
         var tOf = function (K) { return K.t < 0 ? base : (J.relative ? base + K.t : K.t); };
         for (n = 0; n < names.length; n++) {
+            if (!ctrl.property("ADBE Effect Parade").property(names[n])) continue;
+            var used = false;
+            for (k = 0; k < J.keys.length; k++) if (J.keys[k][fields[n]] != null) used = true;
+            if (!used) continue;
             var p = geoSlider(ctrl, names[n]);
             for (k = 0; k < J.keys.length; k++) {
                 var K = J.keys[k], t = tOf(K), val = K[fields[n]];
-                if (names[n] === "Bearing" && p.numKeys > 0) { // continuous rotation, no 359->0 spins
+                if (val == null || isNaN(val)) continue;
+                if (names[n] === "Bearing" && p.numKeys > 0 && !J.rawBearing) { // continuous rotation, no 359->0 spins
                     var prev = p.valueAtTime(t, false);
                     val = prev + ((((val - prev) % 360) + 540) % 360 - 180);
                 }
@@ -250,7 +304,7 @@ function geoSetKeys(jobPath) {
             }
             for (i = 1; i <= p.numKeys; i++) {
                 var kt = p.keyTime(i), mine = -1;
-                for (k = 0; k < J.keys.length; k++) if (Math.abs(tOf(J.keys[k]) - kt) < 1e-4) mine = k;
+                for (k = 0; k < J.keys.length; k++) if (J.keys[k][fields[n]] != null && Math.abs(tOf(J.keys[k]) - kt) < 1e-4) mine = k;
                 if (mine < 0) continue;
                 // baked in-between keys (fly path) are linear; the user's own keys get Easy Ease
                 if (J.keys[mine].linear) p.setInterpolationTypeAtKey(i, KeyframeInterpolationType.LINEAR, KeyframeInterpolationType.LINEAR);
@@ -345,6 +399,14 @@ function geoFinalize(jobPath) {
             var sl = main.layers.add(sItem);
             sl.name = "GEO 3D Render";
             sl.comment = "GEO 3D RENDER";
+            // the frames are 2D, so apply the camera Roll here (opposite sign to the camera) and scale to cover the corners
+            if (geoControls(main).property("ADBE Effect Parade").property("Roll")) {
+                var RL = GEO_CTRL + '.effect("Roll")(1).value';
+                sl.property("ADBE Transform Group").property("ADBE Rotate Z").expression = '-' + RL;
+                sl.property("ADBE Transform Group").property("ADBE Scale").expression =
+                    'var r=Math.abs(' + RL + ')*Math.PI/180;var w=thisComp.width,h=thisComp.height;' +
+                    'var k=100*Math.max((w*Math.cos(r)+h*Math.sin(r))/w,(w*Math.sin(r)+h*Math.cos(r))/h);[k,k];';
+            }
             sl.moveToEnd();
             // World layer above it keeps borders/arrows; its imagery is replaced by the render
             for (i = 1; i <= world.numLayers; i++) if (world.layer(i).comment === "GEO IMAGERY") world.layer(i).enabled = false;
@@ -394,6 +456,7 @@ function geoAddShape(world, S, SCALE_EXPR, t0) {
         gc().property("Path " + (i + 1)).property("ADBE Vector Shape").setValue(shp);
         if (S.paths[i].closed) hasClosed = true;
     }
+    if (S.spotlight) return geoSpotlight(sl, S, t0, gc);
     var wantFill = hasClosed && S.fillOpacity > 0;
     gc().addProperty("ADBE Vector Filter - Trim").name = "Trim Paths 1";   // fixed names: expressions refer to them
     gc().addProperty("ADBE Vector Graphic - Stroke").name = "Stroke 1";
@@ -438,7 +501,13 @@ function geoAddShape(world, S, SCALE_EXPR, t0) {
         } catch (e) {}
     }
     if (S.blend && BlendingMode[S.blend] !== undefined) { try { sl.blendingMode = BlendingMode[S.blend]; } catch (e) {} }
-    if (S.opacity !== undefined && S.opacity < 100) sl.property("ADBE Transform Group").property("ADBE Opacity").setValue(S.opacity);
+    var op = S.opacity === undefined ? 100 : S.opacity;
+    if (op < 100) sl.property("ADBE Transform Group").property("ADBE Opacity").setValue(op);
+    if (S.flicker) {   // news-style flicker for ~1.2 s after the feature appears
+        sl.property("ADBE Transform Group").property("ADBE Opacity").expression =
+            'posterizeTime(14);var t=time-(' + geoNum(t0 + (S.drawEnd > S.drawStart ? S.drawStart : 0)) + ');' +
+            't<0?value:(t<1.2?(random()<0.55?value:value*0.15):value);';
+    }
     if (S.arrowHead) geoAddArrowHead(sl, S, SCALE_EXPR);
     return sl;
 }
@@ -460,6 +529,8 @@ function geoAddArrowHead(sl, S, SCALE_EXPR) {
     tr.property("ADBE Vector Rotation").expression = 'var t=Math.max(0.001,' + TRIM + '/100);var d=' + PATH + '.tangentOnPath(t);radiansToDegrees(Math.atan2(d[1],d[0]));';
     tr.property("ADBE Vector Scale").expression = SCALE_EXPR + ' var k=' + (S.strokeW * 100) + '/s;[k,k];';
     tr.property("ADBE Vector Group Opacity").expression = TRIM + '>0.5?100:0;';
+    // put the head above the line so the stroke's round cap does not blunt the tip
+    try { sl.property("ADBE Root Vectors Group").property("Head").moveTo(1); } catch (eM) {}
 }
 
 // ---------- pin: labels & selected layers follow a lat/lon ----------
@@ -533,7 +604,49 @@ function geoPinLayers(jobPath) {
     }
 }
 
-// job: {compId, labels:[{text,lat,lng,size,color,appear,font,dot,dotColor}], relative}
+function geoUniqueLayerName(comp, base) {
+    var name = base, n = 1, taken = {};
+    for (var i = 1; i <= comp.numLayers; i++) taken[comp.layer(i).name] = true;
+    while (taken[name] || taken[name + " (pinned)"]) { n++; name = base + " " + n; }
+    return name;
+}
+
+// marker at the place: "dot" or "pulse" (dot + expanding ring that repeats)
+function geoAddMarker(c, L, z, M, appear) {
+    var mk = c.layers.addShape();
+    mk.name = geoUniqueLayerName(c, L.text + " - علامة");
+    var root = function () { return mk.property("ADBE Root Vectors Group"); };
+    var r = Math.max(10, L.size * 0.32);
+    var col = L.dotColor || L.color;
+    var addCircle = function (gname, size, filled) {
+        root().addProperty("ADBE Vector Group").name = gname;
+        var g = function () { return root().property(gname).property("ADBE Vectors Group"); };
+        g().addProperty("ADBE Vector Shape - Ellipse").name = "Ellipse 1";
+        g().property("Ellipse 1").property("ADBE Vector Ellipse Size").setValue([size, size]);
+        if (filled) {
+            g().addProperty("ADBE Vector Graphic - Fill").name = "Fill 1";
+            g().property("Fill 1").property("ADBE Vector Fill Color").setValue(col);
+        }
+        g().addProperty("ADBE Vector Graphic - Stroke").name = "Stroke 1";
+        g().property("Stroke 1").property("ADBE Vector Stroke Color").setValue(filled ? [0, 0, 0] : col);
+        g().property("Stroke 1").property("ADBE Vector Stroke Width").setValue(filled ? Math.max(2, size * 0.15) : Math.max(2, size * 0.12));
+    };
+    if (L.marker === "pulse") {
+        addCircle("Ring", r, false);
+        var tr = root().property("Ring").property("ADBE Vector Transform Group");
+        var T = geoNum(appear);
+        tr.property("ADBE Vector Scale").expression = 'var p=Math.max(0,time-(' + T + '))%1.6/1.6;var k=100+p*280;[k,k];';
+        tr.property("ADBE Vector Group Opacity").expression = 'time<(' + T + ')?0:(1-(Math.max(0,time-(' + T + '))%1.6/1.6))*100;';
+    }
+    addCircle("Dot", r, true);
+    mk.property("ADBE Transform Group").property("ADBE Anchor Point").setValue([0, 0]);
+    geoPinLayer(mk, L.lat, L.lng, z, M, false);
+    var op = mk.property("ADBE Transform Group").property("ADBE Opacity");
+    op.setValueAtTime(appear, 0); op.setValueAtTime(appear + 0.4, 100);
+    return mk;
+}
+
+// job: {compId, labels:[{text,lat,lng,size,color,appear,font,marker:"none|dot|pulse",style:"plain|box|tag",dotColor,boxColor}], relative}
 function geoAddLabels(jobPath) {
     try {
         var J = geoReadJob(jobPath);
@@ -543,40 +656,78 @@ function geoAddLabels(jobPath) {
         app.beginUndoGroup("GeoMotion: labels");
         for (var i = 0; i < J.labels.length; i++) {
             var L = J.labels[i], appear = base + (L.appear || 0);
-            if (L.dot) {
-                var dot = c.layers.addShape();
-                dot.name = L.text + " - dot";
-                dot.property("ADBE Root Vectors Group").addProperty("ADBE Vector Group").name = "Dot";
-                var dv = function () { return dot.property("ADBE Root Vectors Group").property("Dot").property("ADBE Vectors Group"); };
-                dv().addProperty("ADBE Vector Shape - Ellipse").name = "Ellipse 1";
-                dv().addProperty("ADBE Vector Graphic - Fill").name = "Fill 1";
-                dv().addProperty("ADBE Vector Graphic - Stroke").name = "Stroke 1";
-                var r = Math.max(10, L.size * 0.32);
-                dv().property("Ellipse 1").property("ADBE Vector Ellipse Size").setValue([r, r]);
-                dv().property("Fill 1").property("ADBE Vector Fill Color").setValue(L.dotColor || L.color);
-                dv().property("Stroke 1").property("ADBE Vector Stroke Color").setValue([0, 0, 0]);
-                dv().property("Stroke 1").property("ADBE Vector Stroke Width").setValue(Math.max(2, r * 0.15));
-                dot.property("ADBE Transform Group").property("ADBE Anchor Point").setValue([0, 0]);
-                geoPinLayer(dot, L.lat, L.lng, z, M, false);
-                var dop = dot.property("ADBE Transform Group").property("ADBE Opacity");
-                dop.setValueAtTime(appear, 0); dop.setValueAtTime(appear + 0.4, 100);
+            var style = L.style || "plain", marker = L.marker || (L.dot ? "dot" : "none");
+            L.marker = marker;
+            var lineLen = Math.round(L.size * 1.6);
+
+            if (marker !== "none") geoAddMarker(c, L, z, M, appear);
+
+            // leader line for the "tag" style: a vertical stroke from the place up to the text
+            if (style === "tag") {
+                var ln = c.layers.addShape();
+                ln.name = geoUniqueLayerName(c, L.text + " - خط");
+                ln.property("ADBE Root Vectors Group").addProperty("ADBE Vector Group").name = "Line";
+                var lg = function () { return ln.property("ADBE Root Vectors Group").property("Line").property("ADBE Vectors Group"); };
+                lg().addProperty("ADBE Vector Shape - Group").name = "Path 1";
+                var sh = new Shape(); sh.vertices = [[0, 0], [0, -lineLen]]; sh.closed = false;
+                lg().property("Path 1").property("ADBE Vector Shape").setValue(sh);
+                lg().addProperty("ADBE Vector Filter - Trim").name = "Trim Paths 1";
+                lg().addProperty("ADBE Vector Graphic - Stroke").name = "Stroke 1";
+                lg().property("Stroke 1").property("ADBE Vector Stroke Color").setValue(L.color);
+                lg().property("Stroke 1").property("ADBE Vector Stroke Width").setValue(Math.max(2, L.size * 0.06));
+                var te = lg().property("Trim Paths 1").property("ADBE Vector Trim End");
+                te.setValueAtTime(appear, 0); te.setValueAtTime(appear + 0.5, 100); geoEase(te, 1); geoEase(te, 2);
+                ln.property("ADBE Transform Group").property("ADBE Anchor Point").setValue([0, 0]);
+                geoPinLayer(ln, L.lat, L.lng, z, M, false);
             }
+
+            var tname = geoUniqueLayerName(c, L.text);
+            var box = null;
+            if (style === "box") {          // coloured box behind the text (added first so it sits below)
+                box = c.layers.addShape();
+                box.name = tname + " - صندوق";
+            }
+
             var tl = c.layers.addText(L.text);
-            tl.name = L.text;
+            tl.name = tname;
             var tp = tl.property("ADBE Text Properties").property("ADBE Text Document");
             var td = tp.value;
             td.resetCharStyle();
             td.fontSize = L.size;
             try { td.font = L.font; } catch (e) {}
             td.applyFill = true; td.fillColor = L.color;
-            td.applyStroke = true; td.strokeColor = [0, 0, 0]; td.strokeWidth = Math.max(2, L.size * 0.08); td.strokeOverFill = false;
+            if (style === "box") td.applyStroke = false;
+            else { td.applyStroke = true; td.strokeColor = [0, 0, 0]; td.strokeWidth = Math.max(2, L.size * 0.08); td.strokeOverFill = false; }
             td.justification = ParagraphJustification.CENTER_JUSTIFY;
             try { td.direction = ParagraphDirection.DIRECTION_RIGHT_TO_LEFT; } catch (e) {}   // AE 24+
             tp.setValue(td);
-            tl.property("ADBE Transform Group").property("ADBE Anchor Point").setValue([0, L.dot ? L.size * 0.55 : L.size * -0.35]);
+            // centre the anchor on the text box, whatever the font metrics
+            tl.property("ADBE Transform Group").property("ADBE Anchor Point").expression =
+                'var r=sourceRectAtTime(time,false);[r.left+r.width/2,r.top+r.height/2];';
             geoPinLayer(tl, L.lat, L.lng, z, M, false);
+            var offY = marker === "none" && style !== "tag" ? 0 : -(style === "tag" ? lineLen + L.size * 0.7 : L.size * 0.95);
+            tl.property("ADBE Effect Parade").property("Pin Offset Y").property(1).setValue(offY);
             var top = tl.property("ADBE Transform Group").property("ADBE Opacity");
-            top.setValueAtTime(appear, 0); top.setValueAtTime(appear + 0.5, 100);
+            var tIn = appear + (style === "tag" ? 0.35 : 0);
+            top.setValueAtTime(tIn, 0); top.setValueAtTime(tIn + 0.5, 100);
+
+            if (box) {
+                var pad = Math.round(L.size * 0.35);
+                box.property("ADBE Root Vectors Group").addProperty("ADBE Vector Group").name = "Box";
+                var bg = function () { return box.property("ADBE Root Vectors Group").property("Box").property("ADBE Vectors Group"); };
+                bg().addProperty("ADBE Vector Shape - Rect").name = "Rect 1";
+                bg().addProperty("ADBE Vector Graphic - Fill").name = "Fill 1";
+                bg().property("Fill 1").property("ADBE Vector Fill Color").setValue(L.boxColor || [0.75, 0.05, 0.05]);
+                var TL = 'thisComp.layer("' + geoEsc(tl.name) + '")';   // geoPinLayer renamed it to "<name> (pinned)"
+                bg().property("Rect 1").property("ADBE Vector Rect Size").expression =
+                    'var t=' + TL + ';var r=t.sourceRectAtTime(time,false);var k=t.transform.scale.value[0]/100;' +
+                    '[r.width*k+' + (pad * 2) + ',r.height*k+' + pad + '];';
+                try { bg().property("Rect 1").property("ADBE Vector Rect Roundness").setValue(Math.round(L.size * 0.08)); } catch (e) {}
+                var btg = box.property("ADBE Transform Group");
+                btg.property("ADBE Anchor Point").setValue([0, 0]);
+                btg.property("ADBE Position").expression = TL + '.transform.position.value;';
+                btg.property("ADBE Opacity").expression = TL + '.transform.opacity.value;';
+            }
         }
         app.endUndoGroup();
         return "OK|" + J.labels.length;
@@ -584,4 +735,69 @@ function geoAddLabels(jobPath) {
         try { app.endUndoGroup(); } catch (e3) {}
         return geoErr("", e);
     }
+}
+
+// darken everything except the feature: a huge rectangle with the feature rings as holes (even-odd fill)
+function geoSpotlight(sl, S, t0, gc) {
+    // outer rectangle = feature bbox + 30000 World px each side (AE does not draw shapes hundreds of thousands of px wide)
+    var x0 = 1e12, y0 = 1e12, x1 = -1e12, y1 = -1e12, pi, vi;
+    for (pi = 0; pi < S.paths.length; pi++) for (vi = 0; vi < S.paths[pi].v.length; vi++) {
+        var q = S.paths[pi].v[vi];
+        if (q[0] < x0) x0 = q[0]; if (q[1] < y0) y0 = q[1]; if (q[0] > x1) x1 = q[0]; if (q[1] > y1) y1 = q[1];
+    }
+    var M = 30000;
+    var big = new Shape();
+    big.vertices = [[x0 - M, y0 - M], [x1 + M, y0 - M], [x1 + M, y1 + M], [x0 - M, y1 + M]];
+    big.closed = true;
+    gc().addProperty("ADBE Vector Shape - Group").name = "Outside";
+    gc().property("Outside").property("ADBE Vector Shape").setValue(big);
+    gc().addProperty("ADBE Vector Graphic - Fill").name = "Fill 1";
+    var fl = function () { return gc().property("Fill 1"); };
+    fl().property("ADBE Vector Fill Color").setValue(S.fill || [0, 0, 0]);
+    try { fl().property("ADBE Vector Fill Rule").setValue(2); } catch (e) {}   // 2 = even-odd: feature rings become holes
+    var fo = fl().property("ADBE Vector Fill Opacity");
+    var dim = S.dim === undefined ? 65 : S.dim;
+    fo.setValueAtTime(t0, 0);
+    fo.setValueAtTime(t0 + Math.max(0.6, S.drawEnd || 0.8), dim);
+    geoEase(fo, 1); geoEase(fo, 2);
+    sl.name = S.name + " (تعتيم)";
+    return sl;
+}
+
+// selected layers -> 3D and parented to "GEO Map Anchor" (they then follow pan, zoom, bearing and tilt)
+function geoLinkToAnchor() {
+    try {
+        var M = geoActiveMap();
+        if (!M) return "ERR|افتح Map Comp في After Effects أولاً.";
+        var c = M.comp, sel = c.selectedLayers, n = 0, anc = c.layer("GEO Map Anchor");
+        if (!sel.length) return "ERR|حدّد الطبقات في AE أولاً.";
+        app.beginUndoGroup("GeoMotion: link to anchor");
+        for (var i = 0; i < sel.length; i++) {
+            var L = sel[i];
+            if (!geoPinnable(L) || L === anc) continue;
+            if (!L.threeDLayer) L.threeDLayer = true;
+            L.parent = anc;            // AE compensates the transform so the layer keeps its current look
+            n++;
+        }
+        app.endUndoGroup();
+        return "OK|" + n;
+    } catch (e) { try { app.endUndoGroup(); } catch (e3) {} return geoErr("", e); }
+}
+
+// an empty 3D shape layer inside the World comp: draw on it with the Pen tool and it stays on the map
+function geoCreateDrawLayer() {
+    try {
+        var M = geoActiveMap();
+        if (!M) return "ERR|افتح Map Comp في After Effects أولاً.";
+        app.beginUndoGroup("GeoMotion: draw layer");
+        var world = geoWorldComp(M.comp);
+        var sl = world.layers.addShape();
+        sl.name = "رسم حر";
+        sl.threeDLayer = true;
+        sl.property("ADBE Transform Group").property("ADBE Anchor Point").setValue([0, 0, 0]);
+        sl.property("ADBE Transform Group").property("ADBE Position").setValue([0, 0, 0]);
+        app.endUndoGroup();
+        try { world.openInViewer(); } catch (e2) {}
+        return "OK|" + world.name;
+    } catch (e) { try { app.endUndoGroup(); } catch (e3) {} return geoErr("", e); }
 }
