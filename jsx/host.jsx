@@ -8,7 +8,8 @@
  *     GEO Map Anchor            3D null parented to the map: parent your own 3D layers here
  *     GEO World                 3D precomp, Collapse Transformations ON; anchor/scale/rotation by expression
  *   <name> World                precomp in a FIXED reference space (zoom ZR, origin X0/Y0):
- *                               imagery plates (replaced by Finalize), borders, arrows
+ *                               imagery plates (replaced by Finalize), borders, arrows — all 3D layers:
+ *                               a collapsed precomp passes the camera (tilt) only to its 3D layers
  * Pinned layers (labels, images) live in the main comp and follow a lat/lon via toComp()/toWorld().
  *
  * The panel talks to these functions with JSON job files on disk; results come back as "OK|..." / "ERR|...".
@@ -328,10 +329,11 @@ function geoFinalize(jobPath) {
             var L = world.layers.add(item);
             L.comment = "GEO IMAGERY";
             L.name = P.isBase ? "Map imagery (base)" : "Map imagery z" + Math.round(P.zoom * 10) / 10;
+            L.threeDLayer = true;   // inside a collapsed precomp only 3D layers receive the main comp's camera (tilt)
             var tg = L.property("ADBE Transform Group");
-            tg.property("ADBE Position").setValue([P.x, P.y]);
+            tg.property("ADBE Position").setValue([P.x, P.y, 0]);
             var sc = P.scale * (P.w / item.width);
-            tg.property("ADBE Scale").setValue([sc, sc]);
+            tg.property("ADBE Scale").setValue([sc, sc, 100]);
             if (!P.isBase) tg.property("ADBE Opacity").expression = zoomExpr + ' linear(z,' + (P.zoom - 1.0) + ',' + (P.zoom - 0.4) + ',0,100);';
             L.moveToEnd();
         }
@@ -376,8 +378,9 @@ function geoAddShapes(jobPath) {
 function geoAddShape(world, S, SCALE_EXPR, t0) {
     var sl = world.layers.addShape();
     sl.name = S.name;
-    sl.property("ADBE Transform Group").property("ADBE Anchor Point").setValue([0, 0]);
-    sl.property("ADBE Transform Group").property("ADBE Position").setValue([0, 0]);
+    sl.threeDLayer = true;  // inside a collapsed precomp only 3D layers receive the main comp's camera (tilt)
+    sl.property("ADBE Transform Group").property("ADBE Anchor Point").setValue([0, 0, 0]);
+    sl.property("ADBE Transform Group").property("ADBE Position").setValue([0, 0, 0]);
     sl.property("ADBE Root Vectors Group").addProperty("ADBE Vector Group").name = "Feature";
     var gc = function () { return sl.property("ADBE Root Vectors Group").property("Feature").property("ADBE Vectors Group"); };
     var i, hasClosed = false;
