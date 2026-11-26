@@ -1,0 +1,232 @@
+<!DOCTYPE html>
+<html lang="ar" dir="rtl">
+<head>
+  <meta charset="utf-8">
+  <title>GeoMotion</title>
+  <link rel="stylesheet" href="js/lib/maplibre-gl.css">
+  <link rel="stylesheet" href="css/style.css">
+  <!-- CEP mixed context exposes Node's `module`; hide it so MapLibre's UMD attaches to window -->
+  <script>
+    window.__nodeModule = window.module; window.__nodeExports = window.exports; window.__nodeDefine = window.define;
+    try { window.module = undefined; window.exports = undefined; window.define = undefined; } catch (e) {}
+  </script>
+  <script src="js/lib/maplibre-gl.js"></script>
+  <script src="js/geomath.js"></script>
+  <script src="js/importers.js"></script>
+  <script>
+    try { window.module = window.__nodeModule; window.exports = window.__nodeExports; window.define = window.__nodeDefine; } catch (e) {}
+  </script>
+</head>
+<body>
+  <div id="app">
+    <aside id="side">
+      <header class="brand">GeoMotion <span>خرائط متحركة داخل After Effects</span></header>
+
+      <nav class="tabs">
+        <button data-tab="t-comp" class="on">الكومب</button>
+        <button data-tab="t-feat">المعالم</button>
+        <button data-tab="t-style">النمط</button>
+        <button data-tab="t-3d">3D</button>
+        <button data-tab="t-final">الإخراج</button>
+      </nav>
+
+      <!-- ===== Map Comp + camera ===== -->
+      <div class="tab on" id="t-comp">
+        <section>
+          <h3>Map Comp جديد</h3>
+          <div class="grid4">
+            <label>العرض<input id="cw" type="number" value="1920"></label>
+            <label>الارتفاع<input id="ch" type="number" value="1080"></label>
+            <label>FPS<input id="fps" type="number" value="25"></label>
+            <label>المدة (ث)<input id="dur" type="number" value="15" step="0.5"></label>
+          </div>
+          <div class="row">
+            <input id="cname" type="text" value="GEO Map" title="اسم الكومب">
+            <button id="btnCreate" class="accent">إنشاء Map Comp</button>
+          </div>
+          <p class="hint">يُنشأ الكومب على المنظر الحالي للخريطة وبالنمط المختار في تبويب «النمط» (الآن: <b id="curStyle"></b>)، مع طبقة «GEO Map Controls»: Latitude / Longitude / Zoom / Bearing / Pitch.</p>
+        </section>
+
+        <section>
+          <h3>الكاميرا <small id="linkState">(لا يوجد Map Comp نشط)</small></h3>
+          <label class="check"><input id="link" type="checkbox" checked> ربط المعاينة بالتايملاين (الخريطة تتبع رأس التشغيل)</label>
+          <label class="check"><input id="autoKey" type="checkbox"> كيفريم تلقائي عند تحريك الخريطة (بعد أول كيفريم)</label>
+          <div class="row" style="margin-top:6px">
+            <button id="btnKey" class="primary small">◆ كيفريم عند رأس التشغيل</button>
+          </div>
+          <div class="row" style="margin-top:6px">
+            <button id="btnReset">تصفير الدوران والميل</button>
+            <label class="inline">ميل<input id="pitchNow" type="range" min="0" max="85" value="0"></label>
+          </div>
+          <p class="hint">اسحب للتحريك، العجلة للزوم، زر الفأرة الأيمن أو Ctrl + سحب للدوران والميل. ثم اضغط كيفريم.</p>
+        </section>
+
+        <section>
+          <h3>تثبيت على الخريطة (Pin)</h3>
+          <button id="btnPin">ثبّت الطبقات المحددة في مكانها على الخريطة</button>
+          <p class="hint">حدّد الطبقات في AE (صورة، فيديو، نص…) ثم اضغط: تبقى في مكانها الجغرافي وتتحرك مع الخريطة. يضيف: Pin Latitude / Longitude / Offset X / Offset Y / Scale With Map. للصور والفيديو يُفعَّل Scale With Map تلقائياً. لطبقات 3D: اجعلها Parent لـ «GEO Map Anchor».</p>
+        </section>
+      </div>
+
+      <!-- ===== Features ===== -->
+      <div class="tab" id="t-feat">
+        <section>
+          <h3>البحث</h3>
+          <div class="row">
+            <input id="q" type="text" placeholder="سوريا، بغداد، نهر دجلة، إدلب…">
+            <button id="btnSearch">بحث</button>
+          </div>
+          <ul id="results" class="list"></ul>
+        </section>
+        <section>
+          <h3>استيراد ملف</h3>
+          <input id="fileIn" type="file" accept=".geojson,.json,.kml,.gpx,.csv,.tsv" multiple>
+          <button id="btnExport" class="mini" style="margin-top:4px">تصدير المعالم GeoJSON</button>
+          <p class="hint">GeoJSON · KML · GPX · CSV (أعمدة lat / lon ومعها name اختيارياً)</p>
+        </section>
+        <section>
+          <h3>ارسم شكلاً على الخريطة</h3>
+          <div class="row">
+            <select id="drawKind"><option value="Polygon">منطقة مغلقة</option><option value="LineString">خط / مسار</option></select>
+            <button id="btnDraw">ابدأ الرسم</button>
+          </div>
+          <p class="hint">انقر نقاطاً على الخريطة، نقرة مزدوجة للإنهاء، Esc للإلغاء. للبحث بالنقر: Alt + نقرة تعرض الدولة والمحافظة والمدينة في تلك النقطة.</p>
+        </section>
+        <section>
+          <h3>متصفح المعالم</h3>
+          <ul id="features" class="list"></ul>
+          <div class="grid2" style="margin-top:6px">
+            <label>مدة الحركة (ث)<input id="animDur" type="number" value="3" step="0.5"></label>
+            <label>مسار الكاميرا
+              <select id="animPath"><option value="direct">مباشر</option><option value="fly">طيران (يبتعد ثم يقترب)</option></select>
+            </label>
+            <label>ثبات بعد الحركة (ث)<input id="hold" type="number" value="1" step="0.5" min="0"></label>
+            <label class="check"><input id="keepTilt" type="checkbox" checked> احتفظ بالميل والدوران</label>
+          </div>
+          <p class="hint">«حرّك الكاميرا إليه» يبدأ من رأس التشغيل، ثم ينقل رأس التشغيل لنهاية الحركة، فتتسلسل الدول واحدة بعد الأخرى.</p>
+        </section>
+        <section>
+          <h3>سهم بين مكانين <small>(أضف المكانين للمتصفح أولاً)</small></h3>
+          <div class="grid2">
+            <label>من<select id="arFrom"></select></label>
+            <label>إلى<select id="arTo"></select></label>
+          </div>
+          <div class="grid3">
+            <label>اللون<input id="arColor" type="color" value="#ff3b30"></label>
+            <label>السمك<input id="arW" type="number" value="6" step="0.5"></label>
+            <label>الانحناء<input id="arBend" type="number" value="0.25" step="0.05"></label>
+          </div>
+          <label class="check"><input id="arDash" type="checkbox"> متقطع</label>
+          <button id="btnArrow" style="margin-top:6px">ارسم السهم في AE</button>
+        </section>
+      </div>
+
+      <!-- ===== Style & layers ===== -->
+      <div class="tab" id="t-style">
+        <section>
+          <h3>نمط الخريطة</h3>
+          <div class="grid2">
+            <label>النمط
+              <select id="style">
+                <optgroup label="قمر صناعي">
+                  <option value="satellite">Esri World Imagery</option>
+                  <option value="hybrid">Esri Imagery + طرق وحدود وأسماء</option>
+                  <option value="sentinel">⚠ Sentinel-2 cloudless (EOX) — غير تجاري</option>
+                </optgroup>
+                <optgroup label="متجهة (قابلة للتلوين)">
+                  <option value="liberty">Liberty</option>
+                  <option value="positron">Positron (فاتح)</option>
+                  <option value="dark">Dark (داكن)</option>
+                  <option value="fiord">Fiord (أزرق داكن)</option>
+                  <option value="bright">Bright</option>
+                </optgroup>
+                <optgroup label="Esri">
+                  <option value="esri-topo">Topographic</option>
+                  <option value="esri-street">Streets</option>
+                  <option value="esri-relief">Shaded Relief (تضاريس)</option>
+                  <option value="esri-ocean">Ocean</option>
+                  <option value="esri-dark">Dark Gray</option>
+                  <option value="esri-light">Light Gray</option>
+                </optgroup>
+                <optgroup label="مخصص">
+                  <option value="custom">رابط بلاطات {z}/{x}/{y}</option>
+                </optgroup>
+              </select>
+            </label>
+            <label>لغة الأسماء
+              <select id="labels"><option value="ar">عربي</option><option value="local">لغة البلد</option></select>
+            </label>
+          </div>
+          <label id="customRow" class="hidden">رابط البلاطات
+            <input id="customUrl" type="text" dir="ltr" placeholder="https://…/{z}/{x}/{y}.png">
+          </label>
+          <p class="hint" id="attrib"></p>
+        </section>
+        <section>
+          <h3>الطبقات <small>(للأنماط المتجهة والهجين)</small></h3>
+          <div class="layers" id="layerToggles">
+            <label class="check"><input type="checkbox" data-g="water" checked> الماء والبحار</label>
+            <label class="check"><input type="checkbox" data-g="rivers" checked> الأنهار</label>
+            <label class="check"><input type="checkbox" data-g="roads" checked> الطرق</label>
+            <label class="check"><input type="checkbox" data-g="buildings" checked> المباني</label>
+            <label class="check"><input type="checkbox" data-g="boundaries" checked> الحدود الإدارية</label>
+            <label class="check"><input type="checkbox" data-g="landcover" checked> الغطاء الأرضي</label>
+            <label class="check"><input type="checkbox" data-g="places" checked> أسماء المدن والدول</label>
+            <label class="check"><input type="checkbox" data-g="otherNames" checked> أسماء الطرق والمعالم</label>
+            <label class="check"><input type="checkbox" data-g="relief" checked> ظل تضاريس العالم</label>
+          </div>
+          <label class="check"><input id="customColors" type="checkbox"> ألوان مخصصة</label>
+          <div class="grid3" id="colorRow">
+            <label>اليابسة<input id="colLand" type="color" value="#1b1d22"></label>
+            <label>الماء<input id="colWater" type="color" value="#0d2a45"></label>
+            <label>الطرق<input id="colRoads" type="color" value="#3a3f48"></label>
+          </div>
+        </section>
+      </div>
+
+      <!-- ===== 3D ===== -->
+      <div class="tab" id="t-3d">
+        <section>
+          <h3>ثلاثي الأبعاد</h3>
+          <label class="check"><input id="terrain" type="checkbox"> تضاريس 3D (جبال ووديان حقيقية)</label>
+          <label>تضخيم الارتفاع<input id="exag" type="number" value="1.5" step="0.1" min="0.1" max="5"></label>
+          <label class="check"><input id="hillshade" type="checkbox"> تظليل التضاريس</label>
+          <label class="check"><input id="buildings3d" type="checkbox"> مبانٍ 3D (عند التقريب على المدن)</label>
+          <label class="check"><input id="sky" type="checkbox" checked> سماء وضباب عند الميل</label>
+          <p class="hint">التضاريس والمباني الحقيقية تظهر في AE عبر «إطارات 3D» في Finalize. الكاميرا في AE تدور وتميل مثل المعاينة تماماً.</p>
+        </section>
+      </div>
+
+      <!-- ===== Finalize ===== -->
+      <div class="tab" id="t-final">
+        <section>
+          <h3>Finalize</h3>
+          <label>طريقة الإخراج
+            <select id="outMode">
+              <option value="layers">صور عالية الدقة (حادّة، سريعة)</option>
+              <option value="frames3d">إطارات 3D (تضاريس ومبانٍ حقيقية)</option>
+            </select>
+          </label>
+          <div class="grid2" style="margin-top:6px">
+            <label>الدقة
+              <select id="quality"><option value="4096">4K</option><option value="8192" selected>8K</option></select>
+            </label>
+            <label class="check"><input id="details" type="checkbox" checked> صور تفصيلية للقطات القريبة</label>
+          </div>
+          <label class="check"><input id="bakeBorders" type="checkbox"> ارسم الحدود داخل إطارات 3D (تلتصق بالجبال)</label>
+          <p class="hint" id="modeHint"></p>
+          <button id="btnFinalize" class="primary">Finalize — تحميل الخريطة بدقة كاملة</button>
+          <p class="hint">أعد Finalize بعد أي تغيير في حركة الكاميرا أو النمط.</p>
+        </section>
+      </div>
+
+      <pre id="log"></pre>
+    </aside>
+
+    <main id="stage">
+      <div id="mapbox"><div id="map"></div><div id="hud"></div></div>
+    </main>
+  </div>
+  <script src="js/main.js"></script>
+</body>
+</html>
