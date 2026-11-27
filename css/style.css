@@ -69,3 +69,6 @@ button.mini { padding: 1px 6px; font-size: 11px; }
 input[type=number], input[type=color], #customUrl { direction: ltr; }
 .group { color:#9bd; font-size:10px; }
 #map.drawing { cursor: crosshair; }
+
+button.mini.accent { flex: 0 0 auto; background: #2a4a7a; border-color: #3b64a3; }
+.feat .sw { flex: 0 0 auto; }

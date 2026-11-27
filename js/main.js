@@ -591,12 +591,21 @@
       var isCountry = r.addresstype === 'country' || (r.type === 'administrative' && r.place_rank <= 4);
       var cc = r.address && r.address.country_code ? r.address.country_code.toUpperCase() : null;
       li.innerHTML = '<div><b></b> <span class="sub"></span></div><div class="sub"></div>' +
-        '<div class="fbtns"><button class="mini go">اذهب</button><button class="mini add">أضف للمتصفح</button>' +
+        '<div class="fbtns"><button class="mini sel accent">حدّد</button><button class="mini go">اذهب</button><button class="mini add">أضف للمتصفح</button>' +
         (isCountry && cc ? '<button class="mini prov">+ المحافظات</button><button class="mini inner">+ الحدود الداخلية</button>' : '') + '</div>';
       li.querySelector('b').textContent = title;
       li.querySelector('span.sub').textContent = '(' + (r.addresstype || r.type || r.category) + ')';
       li.querySelectorAll('div.sub')[0].textContent = r.display_name;
       li.querySelector('.go').onclick = function () { fitBBox(bboxOf(r)); };
+      li.querySelector('.sel').onclick = function () {
+        var geom = r.geojson && r.geojson.type ? r.geojson : { type: 'Point', coordinates: [+r.lon, +r.lat] };
+        var ex = state.features.filter(function (f) { return f.name === title && f.geom.type === geom.type; })[0];
+        if (ex) ex.sel = true;
+        else addFeature(title, geom, +r.lon, +r.lat, { group: 'المحدد', quiet: true, cc: r.address && r.address.country_code });
+        renderFeatures(); drawPreviewShapes(); save();
+        fitBBox(bboxOf(r));
+        log('حُدّد: ' + title + ' — لوّنه من «تلوين المناطق المحددة» أو ارسمه في AE');
+      };
       li.ondblclick = function () { fitBBox(bboxOf(r)); };
       li.querySelector('.add').onclick = function () {
         addFeature(title, r.geojson && r.geojson.type ? r.geojson : { type: 'Point', coordinates: [+r.lon, +r.lat] }, +r.lon, +r.lat,
@@ -660,7 +669,7 @@
   // ---------- reverse lookup: Alt + click ----------
   async function lookupAt(lngLat) {
     $('results').innerHTML = '<li>…ما الموجود هنا؟</li>';
-    document.querySelector('.tabs button[data-tab=t-feat]').click();
+    document.querySelector('.tabs button[data-tab=t-select]').click();
     var levels = [3, 5, 8, 10, 14], out = [], seen = {};
     for (var i = 0; i < levels.length; i++) {
       try {
@@ -838,7 +847,32 @@
       ul.appendChild(li);
     });
     fillArrowSelects();
+    renderSelected();
   }
+  function renderSelected() {
+    var ul = $('selList'); if (!ul) return;
+    var list = selected();
+    $('selCount').textContent = '(' + list.length + ')';
+    ul.innerHTML = list.length ? '' : '<li class="hint">لا شيء محدد: ابحث واضغط «حدّد»، أو «ابدأ التحديد» وانقر على الخريطة</li>';
+    list.slice(0, 60).forEach(function (f) {
+      var li = document.createElement('li');
+      li.innerHTML = '<div class="feat"><span class="sw"></span><span class="nm"></span><button class="mini go">اذهب</button><button class="mini un" title="إلغاء تحديده">×</button></div>';
+      li.querySelector('.sw').style.cssText = 'display:inline-block;width:12px;height:12px;border-radius:2px;background:' + (f.fillColor || f.color);
+      li.querySelector('.nm').textContent = f.name;
+      li.querySelector('.go').onclick = function () { fitBBox(f.bbox); };
+      li.querySelector('.un').onclick = function () { f.sel = false; renderFeatures(); drawPreviewShapes(); save(); };
+      ul.appendChild(li);
+    });
+  }
+  $('btnSelFit').onclick = function () {
+    var l = selected(); if (!l.length) return;
+    var b = [180, 90, -180, -90];
+    l.forEach(function (f) { b = [Math.min(b[0], f.bbox[0]), Math.min(b[1], f.bbox[1]), Math.max(b[2], f.bbox[2]), Math.max(b[3], f.bbox[3])]; });
+    fitBBox(b);
+  };
+  $('btnSelDraw').onclick = run('رسم', function () { return drawFeatures(selected().filter(function (f) { return f.geom.type !== 'Point'; })); });
+  $('btnSelNames').onclick = run('اسم', function () { return addLabels(selected()); });
+  $('btnSelClear').onclick = function () { state.features.forEach(function (f) { f.sel = false; }); renderFeatures(); drawPreviewShapes(); save(); };
   function selected() { return state.features.filter(function (f) { return f.sel; }); }
   function escapeHtml(s) { return String(s).replace(/[&<>"]/g, function (c) { return { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]; }); }
   function fillArrowSelects() {
@@ -885,7 +919,7 @@
     var lines = { type: 'FeatureCollection', features: [] }, fills = { type: 'FeatureCollection', features: [] },
         dots = { type: 'FeatureCollection', features: [] };
     state.features.forEach(function (f) {
-      if (f.geom.type === 'Point') { dots.features.push({ type: 'Feature', geometry: f.geom, properties: { c: f.color } }); return; }
+      if (f.geom.type === 'Point') { dots.features.push({ type: 'Feature', geometry: f.geom, properties: { c: f.color, s: f.sel ? 1 : 0 } }); return; }
       var g = f.geom, fo = f.fillOpacity / 100;
       if (t !== undefined) {
         if (f.drawStart === undefined) return;              // only features drawn into this comp are baked into 3D frames
@@ -895,22 +929,27 @@
           fo *= Math.max(0, Math.min(1, (t - f.drawStart - f.drawDur) / 0.6));
         }
       }
-      lines.features.push({ type: 'Feature', geometry: g, properties: { c: f.strokeColor || f.color, w: f.strokeW } });
+      lines.features.push({ type: 'Feature', geometry: g, properties: { c: f.strokeColor || f.color, w: f.strokeW, s: f.sel ? 1 : 0 } });
       if (/Polygon/.test(f.geom.type)) fills.features.push({ type: 'Feature', geometry: f.geom, properties: { c: f.fillColor || f.color, fo: fo } });
     });
     return { lines: lines, fills: fills, dots: dots };
   }
-  function ensureShapeLayers(m, widthScale) {
+  function ensureShapeLayers(m, widthScale, withSelection) {
     if (m.getSource('gm-lines')) return;
     var empty = { type: 'FeatureCollection', features: [] };
     m.addSource('gm-lines', { type: 'geojson', data: empty });
     m.addSource('gm-fills', { type: 'geojson', data: empty });
     m.addSource('gm-dots', { type: 'geojson', data: empty });
     m.addLayer({ id: 'gm-fill', type: 'fill', source: 'gm-fills', paint: { 'fill-color': ['get', 'c'], 'fill-opacity': ['get', 'fo'] } });
+    if (withSelection) {   // selection halo (preview only)
+      m.addLayer({ id: 'gm-sel', type: 'line', source: 'gm-lines', filter: ['==', ['get', 's'], 1], layout: { 'line-join': 'round' },
+        paint: { 'line-color': '#00e5ff', 'line-width': 7, 'line-blur': 3, 'line-opacity': 0.85 } });
+    }
     m.addLayer({ id: 'gm-line', type: 'line', source: 'gm-lines', layout: { 'line-join': 'round', 'line-cap': 'round' },
       paint: { 'line-color': ['get', 'c'], 'line-width': ['*', ['get', 'w'], widthScale] } });
     m.addLayer({ id: 'gm-dot', type: 'circle', source: 'gm-dots',
-      paint: { 'circle-color': ['get', 'c'], 'circle-radius': 5, 'circle-stroke-color': '#000', 'circle-stroke-width': 1 } });
+      paint: { 'circle-color': ['get', 'c'], 'circle-radius': ['case', ['==', ['get', 's'], 1], 7, 5],
+        'circle-stroke-color': ['case', ['==', ['get', 's'], 1], '#00e5ff', '#000'], 'circle-stroke-width': ['case', ['==', ['get', 's'], 1], 3, 1] } });
   }
   function setShapeData(m, t, onlyLines) {
     var c = shapeCollections(t);
@@ -920,7 +959,7 @@
   }
   function drawPreviewShapes() {
     if (!map.isStyleLoaded()) return;
-    ensureShapeLayers(map, $('map').clientWidth / comp().w);
+    ensureShapeLayers(map, $('map').clientWidth / comp().w, true);
     setShapeData(map);
   }
 
@@ -1180,6 +1219,12 @@
 
   // ---------- camera moves ----------
   var MOVE_INFO = {
+    zoomIn: ['مستويات الزوم (1 = ضعف الحجم)', 1.5], zoomOut: ['مستويات الزوم', 1.5],
+    dollyIn: ['قوة الاندفاع للأمام', 1.5], dollyOut: ['قوة الرجوع للخلف', 1.5],
+    approach: ['مستويات الاقتراب (مع ميل ودوران)', 2], rotate360: ['عدد اللفات (1 = 360°)', 1],
+    crashZoom: ['مستويات الزوم السريع', 3], establishing: ['كم يبدأ بعيداً (مستويات زوم)', 4],
+    flyToSel: ['— (يطير إلى أول مكان محدد)', 0], drift: ['قوة الانجراف', 1],
+    tiltReveal: ['مستويات الابتعاد مع النزول لمنظر علوي', 1.5], orbitTilt: ['درجات الدوران مع رفع الميل', 120],
     orbit: ['درجات الدوران (360 = لفة كاملة)', 90], pushIn: ['مستويات زوم للاقتراب', 1.5], pullOut: ['مستويات زوم للابتعاد', 1.5],
     lowAngle: ['ميل الكاميرا النهائي بالدرجات (حتى 85)', 75], topDown: ['— (يعود الميل والدوران إلى صفر)', 0],
     craneUp: ['مستويات زوم للابتعاد مع الرفع', 1.5], spiral: ['درجات الدوران مع اقتراب 1.5 زوم', 180],
@@ -1194,8 +1239,32 @@
   }
   $('moveType').addEventListener('change', function () { $('moveAmt').value = MOVE_INFO[this.value][1]; moveHint(); save(); });
   function buildMove(A, type, amt, c) {
-    var B = Object.assign({}, A), raw = false;
+    var B = Object.assign({}, A), raw = false, start = null, bake = null;
     switch (type) {
+      case 'zoomIn': B.zoom = A.zoom + amt; break;
+      case 'zoomOut': B.zoom = A.zoom - amt; break;
+      case 'dollyIn': case 'dollyOut': {    // the camera itself travels forward / back over the ground
+        var sg = type === 'dollyIn' ? 1 : -1;
+        B.zoom = A.zoom + sg * amt * 0.6; B.pitch = Math.max(0, Math.min(80, A.pitch + sg * 8));
+        var ld = G.panCenter(A.lng, A.lat, A.zoom, A.bearing, 0, -sg * amt * 0.12 * c.h); B.lng = ld[0]; B.lat = ld[1]; break;
+      }
+      case 'approach': B.zoom = A.zoom + amt; B.pitch = Math.max(A.pitch, 55); B.bearing = A.bearing + 25; raw = true; break;
+      case 'rotate360': B.bearing = A.bearing + 360 * (amt || 1); raw = true; bake = 'linear'; break;
+      case 'crashZoom': B.zoom = A.zoom + amt; bake = 'in'; break;
+      case 'establishing':     // starts far and flat, lands on the current view
+        start = Object.assign({}, A, { zoom: A.zoom - amt, pitch: 0, bearing: A.bearing - 30 }); raw = true; bake = 'out'; break;
+      case 'flyToSel': {
+        var f = selected()[0];
+        if (!f) throw new Error('حدّد مكاناً أولاً (تبويب التحديد)');
+        var fit = f.geom.type === 'Point' ? { lng: f.lng, lat: f.lat, zoom: Math.max(A.zoom, 10) } : G.fitZoom(f.bbox, c, 0.12);
+        B = Object.assign({}, A, fit); bake = 'fly'; break;
+      }
+      case 'drift': {
+        B.zoom = A.zoom + 0.25 * amt; B.bearing = A.bearing + 4 * amt; raw = true; bake = 'linear';
+        var dr = G.panCenter(A.lng, A.lat, A.zoom, A.bearing, 0.08 * amt * c.w, 0); B.lng = dr[0]; B.lat = dr[1]; break;
+      }
+      case 'tiltReveal': start = Object.assign({}, A, { pitch: Math.max(A.pitch, 65), zoom: A.zoom + 0.5 }); B.pitch = 0; B.zoom = A.zoom - amt; break;
+      case 'orbitTilt': B.bearing = A.bearing + amt; B.pitch = Math.max(A.pitch, 60); raw = true; break;
       case 'orbit': B.bearing = A.bearing + amt; raw = true; break;
       case 'pushIn': B.zoom = A.zoom + amt; break;
       case 'pullOut': B.zoom = A.zoom - amt; break;
@@ -1215,7 +1284,19 @@
       case 'dutch': B.roll = Math.max(-45, Math.min(45, amt)); break;
       case 'reveal': B.zoom = A.zoom - amt; B.pitch = 0; B.bearing = 0; B.roll = 0; break;
     }
-    return { B: B, raw: raw };
+    return { B: B, raw: raw, start: start, bake: bake };
+  }
+  function bakeKeys(A, B, dur, how, raw, c) {
+    var vp = Math.max(c.w, c.h), n = Math.max(8, Math.round(dur / 0.12)), keys = [];
+    var ease = how === 'in' ? G.EASE['in'] : how === 'out' ? G.EASE.out : how === 'fly' ? G.EASE.inout : G.EASE.linear;
+    for (var i = 0; i <= n; i++) {
+      var t = dur * i / n, e = ease(i / n);
+      var v = G.interpSegment(A, B, e, how === 'fly' ? 'fly' : 'direct', vp), ll = G.mercToLngLat(v.mx, v.my);
+      keys.push({ t: t, lat: ll[1], lng: ll[0], zoom: v.zoom, pitch: v.pitch,
+        bearing: raw ? A.bearing + (B.bearing - A.bearing) * e : v.bearing,
+        roll: (A.roll || 0) + ((B.roll || 0) - (A.roll || 0)) * e, linear: true });
+    }
+    return keys;
   }
   // panel-only preview of a move (does not touch AE)
   function previewMove(A, B, dur, raw) {
@@ -1234,16 +1315,19 @@
     return captureView();
   }
   $('btnMovePreview').onclick = function () {
-    var A = currentStart(), mv = buildMove(A, $('moveType').value, parseFloat($('moveAmt').value) || 0, comp());
-    previewMove(A, mv.B, Math.max(0.2, parseFloat($('moveDur').value) || 4), mv.raw);
+    try {
+      var A = currentStart(), mv = buildMove(A, $('moveType').value, parseFloat($('moveAmt').value) || 0, comp());
+      previewMove(mv.start || A, mv.B, Math.max(0.2, parseFloat($('moveDur').value) || 4), mv.raw);
+    } catch (e) { log(e.message, true); }
   };
   $('btnMove').onclick = run('حركة الكاميرا', async function () {
     await poll();
     var s = needMap(), A = stateView(s), dur = Math.max(0.2, parseFloat($('moveDur').value) || 4);
     var mv = buildMove(A, $('moveType').value, parseFloat($('moveAmt').value) || 0, comp());
-    var lin = $('moveEase').value === 'linear';
-    await host('geoSetKeys', { keys: [Object.assign({ t: 0, linear: lin }, A), Object.assign({ t: dur, linear: lin }, mv.B)],
-      relative: true, rawBearing: mv.raw, gotoAfter: dur });
+    var lin = $('moveEase').value === 'linear', A0 = mv.start || A, keys;
+    if (mv.bake) keys = bakeKeys(A0, mv.B, dur, lin && mv.bake !== 'fly' ? 'linear' : mv.bake, mv.raw, comp());
+    else keys = [Object.assign({ t: 0, linear: lin }, A0), Object.assign({ t: dur, linear: lin }, mv.B)];
+    await host('geoSetKeys', { keys: keys, relative: true, rawBearing: mv.raw, gotoAfter: dur });
     log('حركة «' + $('moveType').selectedOptions[0].textContent + '» ' + dur + 's — رأس التشغيل انتقل لنهايتها');
   });
   $('btnShake').onclick = run('اهتزاز', async function () {

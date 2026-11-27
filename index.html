@@ -24,6 +24,7 @@
 
       <nav class="tabs">
         <button data-tab="t-comp" class="on">الكومب</button>
+        <button data-tab="t-select">التحديد</button>
         <button data-tab="t-feat">المعالم</button>
         <button data-tab="t-style">النمط</button>
         <button data-tab="t-3d">3D</button>
@@ -83,6 +84,23 @@
           <div class="grid2">
             <label>الحركة
               <select id="moveType">
+                <optgroup label="أساسية">
+                  <option value="zoomIn">زوم إن (تكبير)</option>
+                  <option value="zoomOut">زوم أوت (تصغير)</option>
+                  <option value="dollyIn">دولي إن (الكاميرا تندفع للأمام)</option>
+                  <option value="dollyOut">دولي أوت (الكاميرا ترجع للخلف)</option>
+                  <option value="approach">اقتراب سينمائي (زوم + ميل + دوران)</option>
+                  <option value="rotate360">دوران 360° كامل</option>
+                </optgroup>
+                <optgroup label="لقطات الأخبار">
+                  <option value="establishing">لقطة تأسيسية: من بعيد إلى المكان</option>
+                  <option value="flyToSel">طيران إلى المكان المحدد</option>
+                  <option value="crashZoom">زوم سريع (Crash zoom)</option>
+                  <option value="tiltReveal">كشف بالنزول لمنظر علوي</option>
+                  <option value="orbitTilt">دوران مع رفع الميل</option>
+                  <option value="drift">انجراف بطيء (خلفية هادئة)</option>
+                </optgroup>
+                <optgroup label="أخرى">
                 <option value="orbit">دوران حول المكان (Orbit)</option>
                 <option value="pushIn">اقتراب (Push in)</option>
                 <option value="pullOut">ابتعاد (Pull out)</option>
@@ -97,6 +115,7 @@
                 <option value="panDown">تحريك للأسفل</option>
                 <option value="dutch">ميلان الأفق (Dutch angle)</option>
                 <option value="reveal">كشف: من قريب ومائل إلى منظر كامل</option>
+                </optgroup>
               </select>
             </label>
             <label>المقدار<input id="moveAmt" type="number" value="90" step="5" title="درجات للدوران والميل، مستويات زوم للاقتراب، نسبة من الشاشة للتحريك"></label>
@@ -151,21 +170,16 @@
         </section>
       </div>
 
-      <!-- ===== Features ===== -->
-      <div class="tab" id="t-feat">
+      <!-- ===== Selection ===== -->
+      <div class="tab" id="t-select">
         <section>
-          <h3>البحث</h3>
+          <h3>ابحث عن مكان أو معلم وحدّده</h3>
           <div class="row">
-            <input id="q" type="text" placeholder="سوريا، بغداد، نهر دجلة، إدلب…">
+            <input id="q" type="text" placeholder="دولة، محافظة، مدينة، معلم (برج، جسر، مطار، مسجد)…">
             <button id="btnSearch">بحث</button>
           </div>
           <ul id="results" class="list"></ul>
-        </section>
-        <section>
-          <h3>استيراد ملف</h3>
-          <input id="fileIn" type="file" accept=".geojson,.json,.kml,.gpx,.csv,.tsv" multiple>
-          <button id="btnExport" class="mini" style="margin-top:4px">تصدير المعالم GeoJSON</button>
-          <p class="hint">GeoJSON · KML · GPX · CSV (أعمدة lat / lon ومعها name اختيارياً)</p>
+          <p class="hint">«حدّد» يضيف المكان بحدوده ويحدّده ويظهره على الخريطة. «اذهب» يحرّك المعاينة فقط.</p>
         </section>
         <section>
           <h3>تحديد بالنقر على الخريطة</h3>
@@ -187,24 +201,15 @@
           </div>
           <p class="hint">كل نقرة تضيف المكان المحدد بحدوده الحقيقية إلى المتصفح (محدداً)، ثم «ارسم المحدد» أو «أسماء للمحدد».</p>
         </section>
-
         <section>
-          <h3>ارسم شكلاً على الخريطة</h3>
-          <div class="row">
-            <select id="drawKind">
-              <option value="Polygon">منطقة مغلقة</option>
-              <option value="LineString">خط / مسار</option>
-              <option value="Arrow">سهم (نقرة البداية ثم النهاية)</option>
-              <option value="Circle">دائرة (نقرة المركز ثم الحافة)</option>
-              <option value="Point">نقطة / مكان</option>
-            </select>
-            <button id="btnDraw">ابدأ الرسم</button>
+          <h3>المحدد الآن <small id="selCount">(0)</small></h3>
+          <ul id="selList" class="list"></ul>
+          <div class="fbtns" style="margin-top:4px">
+            <button id="btnSelFit" class="mini">اعرض المحدد</button>
+            <button id="btnSelDraw" class="mini">ارسم المحدد في AE</button>
+            <button id="btnSelNames" class="mini">أسماء للمحدد</button>
+            <button id="btnSelClear" class="mini">إلغاء التحديد</button>
           </div>
-          <div class="grid2" style="margin-top:6px">
-            <label>نصف قطر الدائرة (كم)<input id="circleKm" type="number" value="50" step="5" min="0.1"></label>
-            <button id="btnCircle" style="align-self:end">دائرة حول المحدد / المركز</button>
-          </div>
-          <p class="hint">انقر نقاطاً على الخريطة، نقرة مزدوجة للإنهاء، Esc للإلغاء. للبحث بالنقر: Alt + نقرة تعرض الدولة والمحافظة والمدينة في تلك النقطة.</p>
         </section>
         <section>
           <h3>تلوين المناطق المحددة</h3>
@@ -243,6 +248,38 @@
           </div>
           <p class="hint">حدّد المناطق (بالنقر على الخريطة، أو «+ المحافظات»، أو البحث) ثم لوّنها هنا. كل منطقة تبقى طبقة مستقلة في AE تعدّل لونها وشفافيتها لاحقاً.</p>
         </section>
+      </div>
+
+      <!-- ===== Features ===== -->
+      <div class="tab" id="t-feat">
+        
+        <section>
+          <h3>استيراد ملف</h3>
+          <input id="fileIn" type="file" accept=".geojson,.json,.kml,.gpx,.csv,.tsv" multiple>
+          <button id="btnExport" class="mini" style="margin-top:4px">تصدير المعالم GeoJSON</button>
+          <p class="hint">GeoJSON · KML · GPX · CSV (أعمدة lat / lon ومعها name اختيارياً)</p>
+        </section>
+        
+
+        <section>
+          <h3>ارسم شكلاً على الخريطة</h3>
+          <div class="row">
+            <select id="drawKind">
+              <option value="Polygon">منطقة مغلقة</option>
+              <option value="LineString">خط / مسار</option>
+              <option value="Arrow">سهم (نقرة البداية ثم النهاية)</option>
+              <option value="Circle">دائرة (نقرة المركز ثم الحافة)</option>
+              <option value="Point">نقطة / مكان</option>
+            </select>
+            <button id="btnDraw">ابدأ الرسم</button>
+          </div>
+          <div class="grid2" style="margin-top:6px">
+            <label>نصف قطر الدائرة (كم)<input id="circleKm" type="number" value="50" step="5" min="0.1"></label>
+            <button id="btnCircle" style="align-self:end">دائرة حول المحدد / المركز</button>
+          </div>
+          <p class="hint">انقر نقاطاً على الخريطة، نقرة مزدوجة للإنهاء، Esc للإلغاء. للبحث بالنقر: Alt + نقرة تعرض الدولة والمحافظة والمدينة في تلك النقطة.</p>
+        </section>
+        
 
         <section>
           <h3>متصفح المعالم</h3>
