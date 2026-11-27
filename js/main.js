@@ -149,7 +149,12 @@
       radarUrl = j.host + past[past.length - 1].path + '/256/{z}/{x}/{y}/2/1_1.png';
     });
   }
-  var TACTICAL = { land: '#07110d', water: '#041c1f', roads: '#173d2e', bound: '#39ff88', label: '#9dffcf' };
+  // full-map palettes (every fill, not just borders); mono = landcover/parks/buildings take the land colour too
+  var PRESETS = {
+    tactical: { base: 'dark', land: '#07110d', water: '#041c1f', roads: '#173d2e', bound: '#39ff88', label: '#9dffcf' },
+    white: { base: 'positron', mono: true, land: '#ffffff', water: '#eef1f4', roads: '#e3e3e3', bound: '#b9b9b9', label: '#5c5c5c' },
+    black: { base: 'dark', mono: true, land: '#000000', water: '#0b0d10', roads: '#1c1c1c', bound: '#4a4a4a', label: '#bdbdbd' }
+  };
   var DEM_TILES = ['https://s3.amazonaws.com/elevation-tiles-prod/terrarium/{z}/{x}/{y}.png'];
   var styleCache = {};
 
@@ -171,7 +176,7 @@
           sources: { 'gm-raster': { type: 'raster', tiles: [r.tiles], tileSize: 256, maxzoom: r.max, attribution: r.attr },
                      openmaptiles: lib.sources.openmaptiles }, layers: layers };
       });
-    } else p = fetchJSON(OFM + '/styles/' + (v === 'tactical' ? 'dark' : v));
+    } else p = fetchJSON(OFM + '/styles/' + (PRESETS[v] ? PRESETS[v].base : v));
     return p.then(function (spec) { if (v !== 'custom') styleCache[v] = spec; return JSON.parse(JSON.stringify(spec)); });
   }
 
@@ -193,21 +198,23 @@
   function toggles() { return Array.prototype.slice.call(document.querySelectorAll('#layerToggles input[data-g]')); }
   function groups() { var g = {}; toggles().forEach(function (cb) { g[cb.dataset.g] = cb.checked; }); return g; }
 
+  function presetCol(k, id) {
+    var pr = PRESETS[$('style').value];
+    return pr && !$('customColors').checked ? pr[k] : $(id).value;
+  }
   function getLook() {
     return {
       style: $('style').value, lang: $('labels').value, groups: groups(),
-      custom: $('customColors').checked || $('style').value === 'tactical',
-      land: $('style').value === 'tactical' && !$('customColors').checked ? TACTICAL.land : $('colLand').value,
-      water: $('style').value === 'tactical' && !$('customColors').checked ? TACTICAL.water : $('colWater').value,
-      roads: $('style').value === 'tactical' && !$('customColors').checked ? TACTICAL.roads : $('colRoads').value,
-      bound: $('style').value === 'tactical' && !$('customColors').checked ? TACTICAL.bound : $('colBound').value,
-      label: $('style').value === 'tactical' && !$('customColors').checked ? TACTICAL.label : $('colLabel').value,
+      custom: $('customColors').checked || !!PRESETS[$('style').value],
+      mono: !!(PRESETS[$('style').value] && PRESETS[$('style').value].mono),
+      land: presetCol('land', 'colLand'), water: presetCol('water', 'colWater'), roads: presetCol('roads', 'colRoads'),
+      bound: presetCol('bound', 'colBound'), label: presetCol('label', 'colLabel'),
       climate: $('climate').value, climateDate: $('climateDate').value, climateOp: Math.max(0, Math.min(100, parseFloat($('climateOp').value) || 75)) / 100,
       terrain: $('terrain').checked, exag: Math.max(0.1, parseFloat($('exag').value) || 1.5),
       hillshade: $('hillshade').checked, buildings3d: $('buildings3d').checked, sky: $('sky').checked
     };
   }
-  var DARK_STYLES = { dark: 1, fiord: 1, satellite: 1, hybrid: 1, sentinel: 1, 'esri-dark': 1, tactical: 1, nightlights: 1 };
+  var DARK_STYLES = { dark: 1, fiord: 1, satellite: 1, hybrid: 1, sentinel: 1, 'esri-dark': 1, tactical: 1, nightlights: 1, black: 1 };
 
   function applyLook(m, L, opts) {
     opts = opts || {};
@@ -247,7 +254,14 @@
           m.setPaintProperty(l.id, 'text-color', L.label);
           m.setPaintProperty(l.id, 'text-halo-color', L.land);
         }
-        if ((sl === 'landcover' || sl === 'landuse' || sl === 'park') && l.type === 'fill') m.setPaintProperty(l.id, 'fill-opacity', 0.25);
+        if ((sl === 'landcover' || sl === 'landuse' || sl === 'park') && l.type === 'fill') m.setPaintProperty(l.id, 'fill-opacity', L.mono ? 1 : 0.25);
+        if (L.mono) {
+          if (l.type === 'fill' && sl !== 'water') { m.setPaintProperty(l.id, 'fill-color', L.land); try { m.setPaintProperty(l.id, 'fill-outline-color', L.land); } catch (e) {} }
+          if (l.type === 'fill-extrusion') m.setPaintProperty(l.id, 'fill-extrusion-color', L.land);
+          if (l.type === 'raster') m.setLayoutProperty(l.id, 'visibility', 'none');          // shaded relief would tint the map
+          if (l.type === 'line' && sl !== 'boundary' && sl !== 'transportation' && sl !== 'waterway') m.setPaintProperty(l.id, 'line-color', L.roads);
+          if (l.type === 'symbol' && l.layout && l.layout['icon-image']) m.setLayoutProperty(l.id, 'icon-image', '');
+        }
       }
     });
 
