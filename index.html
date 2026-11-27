@@ -124,8 +124,13 @@
         <section>
           <h3>أدوات الخريطة في AE</h3>
           <div class="fbtns">
-            <button id="btnScaleBar" class="mini">مقياس رسم بالكيلومتر (يتغير مع الزوم)</button>
+            <button id="btnScaleBar" class="mini">مقياس رسم بالكيلومتر</button>
+            <button id="btnNorth" class="mini">سهم الشمال</button>
+            <button id="btnLegend" class="mini">دليل ألوان (Legend) للمحدد</button>
+            <button id="btnVignette" class="mini">إطار معتم (Vignette)</button>
           </div>
+          <label class="check" style="margin-top:6px"><input id="freeCam" type="checkbox"> كاميرا حرة في AE (حرّك «GEO Camera» بأدوات الكاميرا والكيفريمات داخل AE)</label>
+          <p class="hint">في الكاميرا الحرة: الزوم والموقع من «GEO Map Controls»، والدوران والميل والاقتراب من كاميرا AE نفسها. أعد Finalize بزوم أبعد قليلاً لتغطي حركتك.</p>
           <div class="grid2" style="margin-top:6px">
             <label>المسار<select id="pathFeat"></select></label>
             <label>المدة (ث)<input id="pathDur" type="number" value="4" step="0.5" min="0.2"></label>
@@ -202,6 +207,44 @@
           <p class="hint">انقر نقاطاً على الخريطة، نقرة مزدوجة للإنهاء، Esc للإلغاء. للبحث بالنقر: Alt + نقرة تعرض الدولة والمحافظة والمدينة في تلك النقطة.</p>
         </section>
         <section>
+          <h3>تلوين المناطق المحددة</h3>
+          <div class="grid3">
+            <label>لون التعبئة<input id="rgFill" type="color" value="#d4202c"></label>
+            <label>شفافية التعبئة %<input id="rgFillOp" type="number" value="45" min="0" max="100" step="5"></label>
+            <label>لون الحواف<input id="rgStroke" type="color" value="#ffffff"></label>
+            <label>سمك الحواف<input id="rgStrokeW" type="number" value="3" min="0" step="0.5"></label>
+            <label>النقش
+              <select id="rgPattern"><option value="solid">تعبئة كاملة</option><option value="stripes">خطوط مائلة</option></select>
+            </label>
+            <label>لون الخطوط<input id="rgStripe" type="color" value="#f2b705"></label>
+            <label>الظهور
+              <select id="rgAnim">
+                <option value="draw">رسم الحدود ثم التعبئة</option>
+                <option value="fade">ظهور تدريجي</option>
+                <option value="grow">تكبير من المركز</option>
+                <option value="flicker">وميض</option>
+                <option value="marching">حدود متحركة (Marching)</option>
+                <option value="none">بدون حركة</option>
+              </select>
+            </label>
+            <label>مدة الظهور (ث)<input id="rgDur" type="number" value="1.5" step="0.1" min="0"></label>
+            <label>الدمج
+              <select id="rgBlend"><option value="NORMAL">Normal</option><option value="SCREEN">Screen</option><option value="MULTIPLY">Multiply</option><option value="OVERLAY">Overlay</option></select>
+            </label>
+          </div>
+          <div class="fbtns" style="margin-top:4px">
+            <label class="check"><input id="rgGlow" type="checkbox" checked> توهج الحواف</label>
+            <label class="check"><input id="rgShadow" type="checkbox"> ظل (منطقة مرفوعة)</label>
+            <label class="check"><input id="rgNames" type="checkbox"> أسماء داخل المناطق</label>
+          </div>
+          <div class="fbtns" style="margin-top:6px">
+            <button id="btnRgApply" class="mini">طبّق على المحدد</button>
+            <button id="btnRgDraw" class="accent">طبّق وارسم المحدد في AE</button>
+          </div>
+          <p class="hint">حدّد المناطق (بالنقر على الخريطة، أو «+ المحافظات»، أو البحث) ثم لوّنها هنا. كل منطقة تبقى طبقة مستقلة في AE تعدّل لونها وشفافيتها لاحقاً.</p>
+        </section>
+
+        <section>
           <h3>متصفح المعالم</h3>
           <ul id="features" class="list"></ul>
           <div class="grid2" style="margin-top:6px">
@@ -218,14 +261,52 @@
           <h3>شكل الأسماء والعلامات</h3>
           <div class="grid3">
             <label>النمط
-              <select id="lblStyle"><option value="plain">نص بحدّ أسود</option><option value="box">نص في صندوق ملوّن (أسلوب الجزيرة)</option><option value="tag">نص مع خط إشارة</option></select>
+              <select id="lblStyle">
+                <option value="box">صندوق ملوّن (أحمر الجزيرة)</option>
+                <option value="pointer">صندوق بمؤشر نحو المكان</option>
+                <option value="plain">نص بحدّ أسود</option>
+                <option value="shadow">نص كبير بظل (أسماء الدول)</option>
+                <option value="inside">داخل المنطقة (بلا علامة)</option>
+                <option value="tag">نص مع خط إشارة</option>
+              </select>
             </label>
             <label>العلامة
-              <select id="lblMarker"><option value="auto">تلقائي</option><option value="none">بدون</option><option value="dot">نقطة</option><option value="pulse">نقطة نابضة</option></select>
+              <select id="lblMarker"><option value="auto">تلقائي</option><option value="none">بدون</option><option value="square">مربع أحمر</option><option value="dot">نقطة</option><option value="ring">حلقة</option><option value="target">هدف (حلقتان)</option><option value="pulse">نقطة نابضة</option></select>
             </label>
             <label>لون الصندوق<input id="lblBox" type="color" value="#b5121b"></label>
+            <label>لون النص<input id="lblText" type="color" value="#ffffff"></label>
+            <label>لون العلامة<input id="lblMarkColor" type="color" value="#d4202c"></label>
+            <label>الخط
+              <select id="lblFont">
+                <option value="Al-Jazeera-Arabic-Bold">الجزيرة Bold</option>
+                <option value="Al-Jazeera-Arabic-Regular">الجزيرة Regular</option>
+                <option value="Al-Jazeera-Arabic-Light">الجزيرة Light</option>
+                <option value="Tahoma-Bold">Tahoma Bold</option>
+                <option value="Arial-BoldMT">Arial Bold</option>
+                <option value="custom">اسم خط آخر…</option>
+              </select>
+            </label>
           </div>
+          <input id="lblFontCustom" type="text" dir="ltr" class="hidden" placeholder="PostScript name, e.g. Cairo-Bold">
         </section>
+        <section>
+          <h3>صور ومجسمات على الخريطة</h3>
+          <div class="row">
+            <input id="imgPath" type="text" dir="ltr" placeholder="مسار صورة PNG / فيديو (دبابة، سفينة، طائرة…)">
+            <button id="btnImgBrowse" class="mini">اختر…</button>
+          </div>
+          <div class="grid3" style="margin-top:4px">
+            <label>العرض (px)<input id="imgSize" type="number" value="220" min="10"></label>
+            <label class="check"><input id="imgScale" type="checkbox" checked> يكبر مع الخريطة</label>
+            <label class="check"><input id="imgShadow" type="checkbox" checked> ظل</label>
+          </div>
+          <div class="fbtns" style="margin-top:4px">
+            <button id="btnImgAdd" class="mini">ضعها على المكان المحدد / المركز</button>
+            <button id="btnFlag" class="mini">علم الدولة المحددة</button>
+          </div>
+          <p class="hint">الصورة تُثبَّت على الإحداثيات وتتحرك مع الخريطة. استخدم PNG بخلفية شفافة لمجسمات الدبابات والسفن.</p>
+        </section>
+
         <section>
           <h3>المفضلة</h3>
           <ul id="favs" class="list"></ul>
@@ -242,6 +323,13 @@
             <label>السمك<input id="arW" type="number" value="6" step="0.5"></label>
             <label>الانحناء<input id="arBend" type="number" value="0.25" step="0.05"></label>
           </div>
+          <label>نوع السهم
+            <select id="arStyle">
+              <option value="line">خط برأس</option>
+              <option value="thick">سهم هجوم عريض</option>
+              <option value="moving">خط متقطع متحرك (اتجاه الحركة)</option>
+            </select>
+          </label>
           <label class="check"><input id="arDash" type="checkbox"> متقطع</label>
           <button id="btnArrow" style="margin-top:6px">ارسم السهم في AE</button>
         </section>
@@ -282,9 +370,17 @@
                   <option value="hybrid">Esri Imagery + طرق وحدود وأسماء</option>
                   <option value="sentinel">⚠ Sentinel-2 cloudless (EOX) — غير تجاري</option>
                 </optgroup>
+                <optgroup label="أنماط الأخبار (من المراجع)">
+                  <option value="ajwhite">أبيض + بحر كحلي</option>
+                  <option value="ajgrey">رمادي فاتح + بحر وأنهار زرقاء</option>
+                  <option value="charcoal">رصاصي داكن (فحمي)</option>
+                  <option value="ajrelief">تضاريس بيج + بحر كحلي</option>
+                  <option value="ajdarksat">قمر صناعي داكن + سواحل متوهجة</option>
+                  <option value="ajgreysat">قمر صناعي رمادي</option>
+                </optgroup>
                 <optgroup label="خرائط بلون واحد (الخريطة كلها)">
                   <option value="white">أبيض بالكامل</option>
-                  <option value="black">أسود بالكامل</option>
+                  <option value="black">أسود رصاصي بالكامل</option>
                 </optgroup>
                 <optgroup label="خرائط خاصة">
                   <option value="tactical">استخباراتية (Tactical) — داكنة بحدود متوهجة</option>
@@ -362,6 +458,17 @@
             <label>الشفافية %<input id="climateOp" type="number" value="75" min="0" max="100" step="5"></label>
           </div>
           <p class="hint">بيانات NASA GIBS مجانية؛ التاريخ يحدد يوم الصورة (يتأخر يوماً أو يومين).</p>
+        </section>
+
+        <section>
+          <h3>تلوين صورة الخريطة في AE</h3>
+          <label class="check"><input id="tintOn" type="checkbox"> لوّن صورة الخريطة بلونين (مثل التضاريس البرتقالية أو البنية)</label>
+          <div class="grid3">
+            <label>الظل<input id="tintDark" type="color" value="#2a1206"></label>
+            <label>الضوء<input id="tintLight" type="color" value="#f0a060"></label>
+            <label>القوة %<input id="tintAmt" type="number" value="80" min="0" max="100"></label>
+          </div>
+          <p class="hint">يُطبَّق في Finalize على صور الخريطة داخل AE (تأثير Tint، قابل للتعديل).</p>
         </section>
       </div>
 

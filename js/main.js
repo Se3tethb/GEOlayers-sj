@@ -70,7 +70,10 @@
     'animDur', 'animPath', 'hold', 'keepTilt', 'arColor', 'arW', 'arBend', 'arDash', 'drawKind',
     'circleKm', 'lblStyle', 'lblMarker', 'lblBox', 'moveType', 'moveAmt', 'moveDur', 'moveEase', 'vShake',
     'colBound', 'colLabel', 'climate', 'climateDate', 'climateOp', 'pickLevel', 'citiesMax', 'citiesTowns', 'routeMode',
-    'choroLow', 'choroHigh', 'choroFill', 'pathDur', 'pathOrient', 'waterMask'];
+    'choroLow', 'choroHigh', 'choroFill', 'pathDur', 'pathOrient', 'waterMask',
+    'tintOn', 'tintDark', 'tintLight', 'tintAmt', 'rgFill', 'rgFillOp', 'rgStroke', 'rgStrokeW', 'rgPattern', 'rgStripe', 'rgAnim',
+    'rgDur', 'rgBlend', 'rgGlow', 'rgShadow', 'rgNames', 'lblText', 'lblMarkColor', 'lblFont', 'lblFontCustom', 'imgPath', 'imgSize',
+    'imgScale', 'imgShadow', 'arStyle', 'freeCam'];
   function uiGet(id) { var el = $(id); return el.type === 'checkbox' ? el.checked : el.value; }
   function uiSet(id, v) { var el = $(id); if (!el) return; if (el.type === 'checkbox') el.checked = !!v; else el.value = v; }
   var stateFile = fs ? pathM.join(workDir('state'), 'features.json') : null;
@@ -125,6 +128,7 @@
     'esri-ocean': { tiles: ESRI('Ocean/World_Ocean_Base'), max: 13, attr: '© Esri, GEBCO, NOAA' },
     'esri-dark': { tiles: ESRI('Canvas/World_Dark_Gray_Base'), max: 16, attr: '© Esri' },
     'esri-light': { tiles: ESRI('Canvas/World_Light_Gray_Base'), max: 16, attr: '© Esri' },
+    'esri-terrain': { tiles: ESRI('World_Terrain_Base'), max: 13, attr: '© Esri, USGS, NOAA' },
     opentopo: { tiles: 'https://a.tile.opentopomap.org/{z}/{x}/{y}.png', max: 17,
       attr: 'Map data © OpenStreetMap contributors, SRTM | Style © OpenTopoMap (CC-BY-SA)' },
     nightlights: { tiles: 'https://gibs.earthdata.nasa.gov/wmts/epsg3857/best/VIIRS_Black_Marble/default/2016-01-01/GoogleMapsCompatible_Level8/{z}/{y}/{x}.png',
@@ -153,7 +157,18 @@
   var PRESETS = {
     tactical: { base: 'dark', land: '#07110d', water: '#041c1f', roads: '#173d2e', bound: '#39ff88', label: '#9dffcf' },
     white: { base: 'positron', mono: true, land: '#ffffff', water: '#eef1f4', roads: '#e3e3e3', bound: '#b9b9b9', label: '#5c5c5c' },
-    black: { base: 'dark', mono: true, land: '#000000', water: '#0b0d10', roads: '#1c1c1c', bound: '#4a4a4a', label: '#bdbdbd' }
+    black: { base: 'dark', mono: true, land: '#3a3d41', water: '#24272b', roads: '#46494e', bound: '#6c7076', label: '#d4d4d4' },
+    // news looks from the reference images
+    ajwhite: { base: 'positron', mono: true, land: '#f1f1f1', water: '#1b3a5c', roads: '#e2e2e2', bound: '#b0b0b0', label: '#3c3c3c' },
+    ajgrey: { base: 'positron', mono: true, land: '#c6cacf', water: '#24507e', roads: '#b7bbc0', bound: '#ffffff', label: '#2d2d2d' },
+    charcoal: { base: 'dark', mono: true, land: '#4a4d52', water: '#2c2f33', roads: '#55595e', bound: '#7b7f85', label: '#e0e0e0' }
+  };
+  // raster base + vector water / coast / borders / names on top
+  var COMPOSITE = {
+    ajrelief: { raster: 'esri-terrain', paint: { 'raster-contrast': 0.35, 'raster-brightness-max': 0.92 }, tint: '#b48f58', tintOp: 0.55, water: '#1b3a5c', waterOp: 1, glow: false, bound: '#ffffff' },
+    ajdarksat: { raster: 'satellite', paint: { 'raster-brightness-max': 0.5, 'raster-saturation': -0.35, 'raster-contrast': 0.1 },
+      water: '#0b1a2b', waterOp: 0.6, glow: true, bound: '#ffffff' },
+    ajgreysat: { raster: 'satellite', paint: { 'raster-saturation': -1, 'raster-brightness-max': 0.8 }, water: '#1d2a38', waterOp: 0.35, glow: false, bound: '#ffffff' }
   };
   var DEM_TILES = ['https://s3.amazonaws.com/elevation-tiles-prod/terrarium/{z}/{x}/{y}.png'];
   var styleCache = {};
@@ -163,7 +178,34 @@
   function getStyleSpec(v) {
     if (v !== 'custom' && styleCache[v]) return Promise.resolve(JSON.parse(JSON.stringify(styleCache[v])));
     var p;
-    if (RASTER[v] || v === 'hybrid' || v === 'custom') {
+    if (COMPOSITE[v]) {
+      var C = COMPOSITE[v], R0 = RASTER[C.raster];
+      p = fetchJSON(OFM + '/styles/liberty').then(function (lib) {
+        var layers = [{ id: 'gm-raster', type: 'raster', source: 'gm-raster', paint: C.paint }];
+        // warm tint over a pale relief: the shading still shows through (reference: beige terrain + navy sea)
+        if (C.tint) layers.push({ id: 'gm-tint', type: 'background', paint: { 'background-color': C.tint, 'background-opacity': C.tintOp } });
+        layers.push({ id: 'gm-water', type: 'fill', source: 'openmaptiles', 'source-layer': 'water',
+          paint: { 'fill-color': C.water, 'fill-opacity': C.waterOp } });
+        if (C.glow) {    // glowing white coastline (reference: dark satellite maps)
+          layers.push({ id: 'gm-coast-glow', type: 'line', source: 'openmaptiles', 'source-layer': 'water',
+            paint: { 'line-color': '#ffffff', 'line-width': 7, 'line-blur': 6, 'line-opacity': 0.55 } });
+          layers.push({ id: 'gm-coast', type: 'line', source: 'openmaptiles', 'source-layer': 'water',
+            paint: { 'line-color': '#ffffff', 'line-width': 1.6, 'line-opacity': 0.95 } });
+        }
+        lib.layers.forEach(function (l) {
+          var sl = l['source-layer'];
+          if (sl === 'boundary' && l.type === 'line') { l.paint = Object.assign({}, l.paint, { 'line-color': C.bound }); layers.push(l); }
+          if (sl === 'waterway' && l.type === 'line') { l.paint = Object.assign({}, l.paint, { 'line-color': C.water }); layers.push(l); }
+          if ((sl === 'place' || sl === 'water_name') && l.type === 'symbol') {
+            l.paint = Object.assign({}, l.paint, { 'text-color': '#ffffff', 'text-halo-color': 'rgba(0,0,0,0.45)', 'text-halo-width': 1, 'text-halo-blur': 1 });
+            layers.push(l);
+          }
+        });
+        return { version: 8, glyphs: lib.glyphs, sprite: lib.sprite,
+          sources: { 'gm-raster': { type: 'raster', tiles: [R0.tiles], tileSize: 256, maxzoom: R0.max, attribution: R0.attr },
+                     openmaptiles: lib.sources.openmaptiles }, layers: layers };
+      });
+    } else if (RASTER[v] || v === 'hybrid' || v === 'custom') {
       p = fetchJSON(OFM + '/styles/liberty').then(function (lib) {
         var r = v === 'custom' ? { tiles: $('customUrl').value.trim(), max: 20, attr: '' } : RASTER[v === 'hybrid' ? 'satellite' : v];
         if (!r.tiles) throw new Error('اكتب رابط البلاطات أولاً');
@@ -214,7 +256,8 @@
       hillshade: $('hillshade').checked, buildings3d: $('buildings3d').checked, sky: $('sky').checked
     };
   }
-  var DARK_STYLES = { dark: 1, fiord: 1, satellite: 1, hybrid: 1, sentinel: 1, 'esri-dark': 1, tactical: 1, nightlights: 1, black: 1 };
+  var DARK_STYLES = { dark: 1, fiord: 1, satellite: 1, hybrid: 1, sentinel: 1, 'esri-dark': 1, tactical: 1, nightlights: 1, black: 1,
+    charcoal: 1, ajdarksat: 1, ajgreysat: 1 };
 
   function applyLook(m, L, opts) {
     opts = opts || {};
@@ -556,7 +599,8 @@
       li.querySelector('.go').onclick = function () { fitBBox(bboxOf(r)); };
       li.ondblclick = function () { fitBBox(bboxOf(r)); };
       li.querySelector('.add').onclick = function () {
-        addFeature(title, r.geojson && r.geojson.type ? r.geojson : { type: 'Point', coordinates: [+r.lon, +r.lat] }, +r.lon, +r.lat);
+        addFeature(title, r.geojson && r.geojson.type ? r.geojson : { type: 'Point', coordinates: [+r.lon, +r.lat] }, +r.lon, +r.lat,
+          { cc: r.address && r.address.country_code });
       };
       if (li.querySelector('.prov')) {
         li.querySelector('.prov').onclick = run('المحافظات', function () { return addProvinces(cc, title, false); });
@@ -699,7 +743,8 @@
       id: 'f' + Date.now() + Math.random().toString(36).slice(2, 6), name: name, geom: geom, lng: lng, lat: lat, bbox: bb,
       color: COLORS[state.features.length % COLORS.length], labelColor: '#ffffff', strokeW: opt.strokeW || (isPoint ? 0 : 4),
       fillOpacity: isArea ? 15 : 0, drawDur: 2, labelSize: 56, glow: false, dash: false, blend: 'NORMAL', opacity: 100,
-      sel: !!opt.group, group: opt.group || '', arrow: !!opt.arrow, spotlight: false, flicker: false
+      sel: !!opt.group, group: opt.group || '', arrow: !!opt.arrow, spotlight: false, flicker: false, cc: opt.cc || '',
+      fillColor: null, strokeColor: null, anim: 'draw', pattern: 'solid', shadow: false
     });
     if (opt.quiet) return;
     renderFeatures(); drawPreviewShapes(); save();
@@ -723,13 +768,14 @@
       var isPoint = f.geom.type === 'Point', isArea = /Polygon/.test(f.geom.type) || f.geom.type === 'GeometryCollection';
       var li = document.createElement('li');
       li.innerHTML =
-        '<div class="feat"><input type="checkbox" class="sel" title="تحديد"><input type="color" class="col" title="لون الحدود"><input type="text" class="nm">' +
+        '<div class="feat"><input type="checkbox" class="sel" title="تحديد"><input type="color" class="col" title="لون الحواف"><input type="text" class="nm">' +
         '<button class="mini del" title="حذف">×</button></div>' +
         (f.group ? '<div class="group">' + escapeHtml(f.group) + '</div>' : '') +
         '<div class="sopts">' +
         (isPoint ? '' : '<label>السمك<input type="number" class="w" step="0.5"></label>') +
         (isArea ? '<label>تعبئة %<input type="number" class="fo" min="0" max="100"></label>' : '') +
         (isPoint ? '' : '<label>مدة الرسم<input type="number" class="dd" step="0.1"></label>') +
+        (isArea ? '<label>لون التعبئة<input type="color" class="fc"></label>' : '') +
         '<label>حجم الاسم<input type="number" class="ls"></label>' +
         '<label>لون الاسم<input type="color" class="lc"></label>' +
         (isPoint ? '' : '<label>الدمج<select class="bl"><option value="NORMAL">Normal</option><option value="SCREEN">Screen</option>' +
@@ -749,7 +795,8 @@
         (isPoint ? '' : '<button class="mini along" title="الكاميرا تسير على الخط وتتجه معه">الكاميرا على المسار</button>') +
         '<button class="mini fav" title="أضف للمفضلة">☆</button></div>';
       var q = function (c) { return li.querySelector(c); };
-      q('.sel').checked = !!f.sel; q('.col').value = f.color; q('.nm').value = f.name; q('.ls').value = f.labelSize;
+      q('.sel').checked = !!f.sel; q('.col').value = f.strokeColor || f.color; q('.nm').value = f.name; q('.ls').value = f.labelSize;
+      if (q('.fc')) q('.fc').value = f.fillColor || f.color;
       q('.lc').value = f.labelColor || '#ffffff';
       if (q('.w')) q('.w').value = f.strokeW;
       if (q('.fo')) q('.fo').value = f.fillOpacity;
@@ -761,7 +808,8 @@
       if (q('.fl')) q('.fl').checked = !!f.flicker;
       if (q('.sp')) q('.sp').checked = !!f.spotlight;
       li.addEventListener('change', function () {
-        f.sel = q('.sel').checked; f.color = q('.col').value; f.name = q('.nm').value;
+        f.sel = q('.sel').checked; f.strokeColor = q('.col').value; f.color = f.strokeColor; f.name = q('.nm').value;
+        if (q('.fc')) f.fillColor = q('.fc').value;
         f.labelSize = parseFloat(q('.ls').value) || 56; f.labelColor = q('.lc').value;
         if (q('.w')) f.strokeW = parseFloat(q('.w').value) || 4;
         if (q('.fo')) f.fillOpacity = Math.max(0, Math.min(100, parseFloat(q('.fo').value) || 0));
@@ -847,8 +895,8 @@
           fo *= Math.max(0, Math.min(1, (t - f.drawStart - f.drawDur) / 0.6));
         }
       }
-      lines.features.push({ type: 'Feature', geometry: g, properties: { c: f.color, w: f.strokeW } });
-      if (/Polygon/.test(f.geom.type)) fills.features.push({ type: 'Feature', geometry: f.geom, properties: { c: f.color, fo: fo } });
+      lines.features.push({ type: 'Feature', geometry: g, properties: { c: f.strokeColor || f.color, w: f.strokeW } });
+      if (/Polygon/.test(f.geom.type)) fills.features.push({ type: 'Feature', geometry: f.geom, properties: { c: f.fillColor || f.color, fo: fo } });
     });
     return { lines: lines, fills: fills, dots: dots };
   }
@@ -901,9 +949,17 @@
         var m0 = G.lngLatToMerc(c0[0], c0[1]), m1 = G.lngLatToMerc(c1[0], c1[1]);
         paths = [G.arcPath(G.mercToWorldPx(refSpace(s), m0[0], m0[1]), G.mercToWorldPx(refSpace(s), m1[0], m1[1]), parseFloat($('arBend').value) || 0)];
       } else paths = featurePaths(f, s);
-      return { name: f.name, paths: paths, stroke: hexToRgb(f.color), strokeW: f.strokeW, fill: f.spotlight ? [0, 0, 0] : hexToRgb(f.color),
-        fillOpacity: f.arrow ? 0 : f.fillOpacity, drawStart: 0, drawEnd: f.drawDur, glow: f.glow, dash: f.dash, blend: f.blend || 'NORMAL',
-        opacity: f.opacity === undefined ? 100 : f.opacity, arrowHead: !!f.arrow, spotlight: !!f.spotlight && !f.arrow, flicker: !!f.flicker };
+      var cm = G.lngLatToMerc(f.lng, f.lat), cpx = G.mercToWorldPx(refSpace(s), cm[0], cm[1]);
+      var anim = f.anim || 'draw', arStyle = f.arrowStyle || $('arStyle').value, arrowThick = f.arrow && arStyle === 'thick';
+      return { name: f.name, paths: paths, stroke: hexToRgb(f.strokeColor || f.color),
+        strokeW: arrowThick ? Math.max(14, f.strokeW * 3) : f.strokeW,
+        fill: f.spotlight ? [0, 0, 0] : hexToRgb(f.fillColor || f.color),
+        fillOpacity: f.arrow ? 0 : f.fillOpacity, drawStart: 0, drawEnd: f.drawDur, glow: f.glow,
+        dash: f.dash || (f.arrow && arStyle === 'moving') || anim === 'marching', marching: anim === 'marching' || (f.arrow && arStyle === 'moving'),
+        blend: f.blend || 'NORMAL', opacity: f.opacity === undefined ? 100 : f.opacity, arrowHead: !!f.arrow,
+        spotlight: !!f.spotlight && !f.arrow, flicker: !!f.flicker || anim === 'flicker', anim: anim, shadow: !!f.shadow,
+        center: [cpx[0], cpx[1]], pattern: f.pattern === 'stripes' && !f.arrow ? 'stripes' : 'solid',
+        stripe: hexToRgb(f.stripeColor || '#f2b705'), stripeGap: 16 * Math.pow(2, s.zr - s.zoom) };
     });
     shapes.forEach(function (x, i) { x.fid = list[i].id; });
     shapes = shapes.filter(function (x) { return x.paths.length; });
@@ -918,14 +974,18 @@
     save();
     log('رُسم ' + r + ' معلم عند ' + s.time.toFixed(2) + 's (داخل كومب «' + s.name + ' World»)');
   }
-  async function addLabels(list) {
+  function labelFont() { return $('lblFont').value === 'custom' ? ($('lblFontCustom').value.trim() || FONT) : $('lblFont').value; }
+  $('lblFont').addEventListener('change', function () { $('lblFontCustom').classList.toggle('hidden', this.value !== 'custom'); });
+  $('lblFontCustom').classList.toggle('hidden', $('lblFont').value !== 'custom');
+  async function addLabels(list, opts) {
     await poll(); needMap();
     if (!list.length) throw new Error('لم تحدد معالم');
-    var mk = $('lblMarker').value;
+    var mk = $('lblMarker').value, st = opts && opts.style || $('lblStyle').value;
     var labels = list.map(function (f) {
-      return { text: f.name, lat: f.lat, lng: f.lng, size: f.labelSize, color: hexToRgb(f.labelColor || '#ffffff'),
-        dotColor: hexToRgb(f.color), boxColor: hexToRgb($('lblBox').value), appear: 0, font: FONT,
-        style: $('lblStyle').value, marker: mk === 'auto' ? (f.geom.type === 'Point' ? 'dot' : 'none') : mk };
+      var isPt = f.geom.type === 'Point';
+      return { text: f.name, lat: f.lat, lng: f.lng, size: f.labelSize, color: hexToRgb($('lblText').value),
+        dotColor: hexToRgb($('lblMarkColor').value), boxColor: hexToRgb($('lblBox').value), appear: 0, font: labelFont(),
+        style: st, marker: st === 'inside' ? 'none' : (mk === 'auto' ? (isPt ? 'square' : 'none') : mk) };
     });
     var r = await host('geoAddLabels', { labels: labels, relative: true });
     log('أُضيف ' + r + ' اسم مثبت على الخريطة');
@@ -941,7 +1001,9 @@
     var dur = Math.max(0.1, parseFloat($('animDur').value) || 3);
     var shape = { name: 'سهم ' + A.name + ' ← ' + B.name, paths: [G.arcPath(pa, pb, parseFloat($('arBend').value) || 0)],
       stroke: hexToRgb($('arColor').value), strokeW: parseFloat($('arW').value) || 6, fill: [0, 0, 0], fillOpacity: 0,
-      drawStart: 0, drawEnd: dur, dash: $('arDash').checked, arrowHead: true };
+      drawStart: 0, drawEnd: dur, dash: $('arDash').checked || $('arStyle').value === 'moving', marching: $('arStyle').value === 'moving',
+      arrowHead: true };
+    if ($('arStyle').value === 'thick') shape.strokeW = Math.max(14, shape.strokeW * 3);
     await host('geoAddShapes', { shapes: [shape], relative: true });
     log('سهم ' + A.name + ' ← ' + B.name);
   });
@@ -1080,7 +1142,9 @@
         baseLL, plan.zb, plan.w, plan.h, dir, 'water_mask.png');
       plates.push({ file: wm.file, x: bp[0], y: bp[1], w: plan.w, scale: 100 * Math.pow(2, S.zr - plan.zb), zoom: plan.zb, isBase: false, isMask: true });
     }
-    var res = await host('geoFinalize', { compId: S.compId, style: look.style, plates: plates, seq: null }, dir);
+    var tint = $('tintOn').checked ? { dark: hexToRgb($('tintDark').value), light: hexToRgb($('tintLight').value),
+      amount: Math.max(0, Math.min(100, parseFloat($('tintAmt').value) || 80)) } : null;
+    var res = await host('geoFinalize', { compId: S.compId, style: look.style, plates: plates, seq: null, tint: tint }, dir);
     log('تم ✔ ' + res);
   }
 
@@ -1374,7 +1438,7 @@
     var title = r.name || (r.display_name || '').split(',')[0];
     var geom = r.geojson && r.geojson.type ? r.geojson : { type: 'Point', coordinates: [+r.lon, +r.lat] };
     if (state.features.some(function (f) { return f.name === title && f.geom.type === geom.type; })) { log('«' + title + '» موجود أصلاً'); return; }
-    addFeature(title, geom, +r.lon, +r.lat, { group: 'تحديد بالنقر', quiet: true });
+    addFeature(title, geom, +r.lon, +r.lat, { group: 'تحديد بالنقر', quiet: true, cc: r.address && r.address.country_code });
     renderFeatures(); drawPreviewShapes(); save();
     log('حُدّد: ' + title + ' (' + (r.addresstype || r.type) + ')');
   }
@@ -1506,6 +1570,86 @@
     var r = await host('geoAttachToPath', { pathLayer: f.aeName, duration: Math.max(0.2, parseFloat($('pathDur').value) || 4), orient: $('pathOrient').checked });
     log('تتحرك ' + r + ' طبقة على «' + f.name + '» من رأس التشغيل');
   });
+
+  // ---------- colour the selected regions ----------
+  function applyRegionStyle() {
+    var list = selected();
+    if (!list.length) throw new Error('حدّد المناطق أولاً (مربع الاختيار بجانب كل معلم، أو التحديد بالنقر)');
+    list.forEach(function (f) {
+      if (f.geom.type === 'Point') return;
+      f.fillColor = $('rgFill').value; f.strokeColor = $('rgStroke').value; f.color = f.strokeColor;
+      f.fillOpacity = Math.max(0, Math.min(100, parseFloat($('rgFillOp').value) || 0));
+      f.strokeW = Math.max(0, parseFloat($('rgStrokeW').value) || 0);
+      f.pattern = $('rgPattern').value; f.stripeColor = $('rgStripe').value;
+      f.anim = $('rgAnim').value; f.drawDur = Math.max(0, parseFloat($('rgDur').value) || 0);
+      f.blend = $('rgBlend').value; f.glow = $('rgGlow').checked; f.shadow = $('rgShadow').checked;
+    });
+    renderFeatures(); drawPreviewShapes(); save();
+    return list.filter(function (f) { return f.geom.type !== 'Point'; });
+  }
+  $('btnRgApply').onclick = function () { try { var l = applyRegionStyle(); log('لُوّنت ' + l.length + ' منطقة'); } catch (e) { log(e.message, true); } };
+  $('btnRgDraw').onclick = run('تلوين المناطق', async function () {
+    var l = applyRegionStyle();
+    await drawFeatures(l);
+    if ($('rgNames').checked) await addLabels(l, { style: 'inside' });
+  });
+
+  // ---------- images, 3D objects as pictures, flags ----------
+  $('btnImgBrowse').onclick = function () {
+    try {
+      var r = window.cep && window.cep.fs && window.cep.fs.showOpenDialogEx
+        ? window.cep.fs.showOpenDialogEx(false, false, 'اختر صورة أو فيديو', '', ['png', 'jpg', 'jpeg', 'psd', 'tif', 'mov', 'mp4', 'ai'])
+        : null;
+      if (r && r.data && r.data.length) { $('imgPath').value = r.data[0]; save(); }
+      else if (!r) log('اكتب مسار الملف في الخانة (نافذة الاختيار تعمل داخل AE فقط)', true);
+    } catch (e) { log('اختيار الملف: ' + e.message, true); }
+  };
+  function placeOf() {
+    var f = selected()[0];
+    if (f) return { lat: f.lat, lng: f.lng, name: f.name };
+    var c = map.getCenter(); return { lat: c.lat, lng: c.lng, name: 'مركز الخريطة' };
+  }
+  $('btnImgAdd').onclick = run('صورة', async function () {
+    await poll(); needMap();
+    var file = $('imgPath').value.trim().replace(/^"|"$/g, '');
+    if (!file) throw new Error('اختر صورة أولاً');
+    var at = placeOf();
+    var r = await host('geoAddImage', { file: file.replace(/\\/g, '/'), lat: at.lat, lng: at.lng, size: parseFloat($('imgSize').value) || 220,
+      scaleWithMap: $('imgScale').checked, shadow: $('imgShadow').checked });
+    log('أُضيفت الصورة على «' + at.name + '» (' + r + ')');
+  });
+  $('btnFlag').onclick = run('العلم', async function () {
+    await poll(); needMap();
+    var list = selected().filter(function (f) { return f.cc; });
+    if (!list.length) throw new Error('حدّد دولة أو مكاناً أُضيف من البحث أو التحديد بالنقر (يحتاج رمز الدولة)');
+    for (var i = 0; i < list.length; i++) {
+      var f = list[i], cc = f.cc.toLowerCase(), p = pathM.join(workDir('assets'), 'flag_' + cc + '.png');
+      if (!fs.existsSync(p)) {
+        var res = await fetch('https://flagcdn.com/w640/' + cc + '.png');
+        if (!res.ok) throw new Error('لم أجد علم ' + cc);
+        fs.writeFileSync(p, BufferC.from(await res.arrayBuffer()));
+      }
+      await host('geoAddImage', { file: p.replace(/\\/g, '/'), lat: f.lat, lng: f.lng, size: parseFloat($('imgSize').value) || 160,
+        scaleWithMap: $('imgScale').checked, shadow: true, name: 'علم ' + f.name });
+    }
+    log('أُضيفت ' + list.length + ' أعلام');
+  });
+
+  // ---------- map furniture ----------
+  $('btnNorth').onclick = run('الشمال', async function () { await poll(); needMap(); await host('geoAddNorthArrow', { font: labelFont() }); log('أُضيف سهم الشمال (يدور مع الخريطة)'); });
+  $('btnVignette').onclick = run('Vignette', async function () { await poll(); needMap(); await host('geoAddVignette', {}); log('أُضيف إطار معتم (GEO Vignette)'); });
+  $('btnLegend').onclick = run('الدليل', async function () {
+    await poll(); needMap();
+    var items = selected().map(function (f) { return { name: f.name, color: hexToRgb(f.fillColor || f.color) }; });
+    if (!items.length) throw new Error('حدّد المعالم التي تظهر في الدليل');
+    await host('geoAddLegend', { items: items.slice(0, 12), font: labelFont() });
+    log('أُضيف دليل ألوان بـ ' + Math.min(12, items.length) + ' عناصر');
+  });
+  $('freeCam').addEventListener('change', run('الكاميرا الحرة', async function () {
+    await poll(); needMap();
+    await host('geoSetFreeCam', { on: $('freeCam').checked });
+    log($('freeCam').checked ? 'الكاميرا حرة: حرّك «GEO Camera» في AE بأدوات الكاميرا (C) والكيفريمات' : 'عادت الكاميرا لتتبع Pitch / Roll من اللوحة');
+  }));
 
   // ---------- init ----------
   renderBms(); fillPathSelect();
