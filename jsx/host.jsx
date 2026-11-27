@@ -382,14 +382,15 @@ function geoFinalize(jobPath) {
             var item = geoImport(proj, P.file, folder, false);
             var L = world.layers.add(item);
             L.comment = "GEO IMAGERY";
-            L.name = P.isBase ? "Map imagery (base)" : "Map imagery z" + Math.round(P.zoom * 10) / 10;
+            L.name = P.isMask ? "قناع الماء (Water mask)" : (P.isBase ? "Map imagery (base)" : "Map imagery z" + Math.round(P.zoom * 10) / 10);
             L.threeDLayer = true;   // inside a collapsed precomp only 3D layers receive the main comp's camera (tilt)
             var tg = L.property("ADBE Transform Group");
             tg.property("ADBE Position").setValue([P.x, P.y, 0]);
             var sc = P.scale * (P.w / item.width);
             tg.property("ADBE Scale").setValue([sc, sc, 100]);
-            if (!P.isBase) tg.property("ADBE Opacity").expression = zoomExpr + ' linear(z,' + (P.zoom - 1.0) + ',' + (P.zoom - 0.4) + ',0,100);';
+            if (!P.isBase && !P.isMask) tg.property("ADBE Opacity").expression = zoomExpr + ' linear(z,' + (P.zoom - 1.0) + ',' + (P.zoom - 0.4) + ',0,100);';
             L.moveToEnd();
+            if (P.isMask) { L.moveToBeginning(); L.enabled = false; L.comment = "GEO IMAGERY"; }   // off by default; use as a track matte
         }
 
         if (J.seq) {
@@ -427,10 +428,10 @@ function geoAddShapes(jobPath) {
         var J = geoReadJob(jobPath);
         var M = geoMapFor(J);
         app.beginUndoGroup("GeoMotion: draw features");
-        var world = geoWorldComp(M.comp), base = J.relative ? M.comp.time : 0;
-        for (var i = 0; i < J.shapes.length; i++) geoAddShape(world, J.shapes[i], geoMapScaleSnippet(M.comp.name), base);
+        var world = geoWorldComp(M.comp), base = J.relative ? M.comp.time : 0, names = [];
+        for (var i = 0; i < J.shapes.length; i++) names.push(geoAddShape(world, J.shapes[i], geoMapScaleSnippet(M.comp.name), base).name);
         app.endUndoGroup();
-        return "OK|" + J.shapes.length;
+        return "OK|" + J.shapes.length + "|" + names.join("\t");
     } catch (e) {
         try { app.endUndoGroup(); } catch (e3) {}
         return geoErr("", e);
@@ -439,7 +440,7 @@ function geoAddShapes(jobPath) {
 
 function geoAddShape(world, S, SCALE_EXPR, t0) {
     var sl = world.layers.addShape();
-    sl.name = S.name;
+    sl.name = geoUniqueLayerName(world, S.name);
     sl.threeDLayer = true;  // inside a collapsed precomp only 3D layers receive the main comp's camera (tilt)
     sl.property("ADBE Transform Group").property("ADBE Anchor Point").setValue([0, 0, 0]);
     sl.property("ADBE Transform Group").property("ADBE Position").setValue([0, 0, 0]);
@@ -760,7 +761,7 @@ function geoSpotlight(sl, S, t0, gc) {
     fo.setValueAtTime(t0, 0);
     fo.setValueAtTime(t0 + Math.max(0.6, S.drawEnd || 0.8), dim);
     geoEase(fo, 1); geoEase(fo, 2);
-    sl.name = S.name + " (تعتيم)";
+    sl.name = geoUniqueLayerName(sl.containingComp, S.name + " (تعتيم)");
     return sl;
 }
 
@@ -799,5 +800,92 @@ function geoCreateDrawLayer() {
         app.endUndoGroup();
         try { world.openInViewer(); } catch (e2) {}
         return "OK|" + world.name;
+    } catch (e) { try { app.endUndoGroup(); } catch (e3) {} return geoErr("", e); }
+}
+
+// scale bar (km / m) that updates with zoom and latitude: a bar + a label in the main comp
+function geoAddScaleBar(jobPath) {
+    try {
+        var J = geoReadJob(jobPath);
+        var M = geoMapFor(J), c = M.comp;
+        app.beginUndoGroup("GeoMotion: scale bar");
+        var CALC = 'var C=thisComp.layer("GEO Map Controls").effect;var z=C("Zoom")(1).value,la=C("Latitude")(1).value;' +
+            'var mpp=40075016.686*Math.cos(la*Math.PI/180)/(512*Math.pow(2,z));' +
+            'var mx=thisComp.layer("GEO Scale Bar").effect("Max Width")(1).value*mpp;' +
+            'var p=Math.pow(10,Math.floor(Math.log(mx)/Math.LN10)),n=mx/p,m=(n>=5?5:(n>=2?2:1))*p;';
+        var bar = c.layers.addShape();
+        bar.name = "GEO Scale Bar";
+        bar.property("ADBE Effect Parade").addProperty("ADBE Slider Control").name = "Max Width";
+        bar.property("ADBE Effect Parade").property("Max Width").property(1).setValue(Math.round(c.width * 0.16));
+        bar.property("ADBE Root Vectors Group").addProperty("ADBE Vector Group").name = "Bar";
+        var g = function () { return bar.property("ADBE Root Vectors Group").property("Bar").property("ADBE Vectors Group"); };
+        g().addProperty("ADBE Vector Shape - Rect").name = "Rect 1";
+        g().addProperty("ADBE Vector Graphic - Fill").name = "Fill 1";
+        g().addProperty("ADBE Vector Graphic - Stroke").name = "Stroke 1";
+        g().property("Fill 1").property("ADBE Vector Fill Color").setValue([1, 1, 1]);
+        g().property("Stroke 1").property("ADBE Vector Stroke Color").setValue([0, 0, 0]);
+        g().property("Stroke 1").property("ADBE Vector Stroke Width").setValue(2);
+        g().property("Rect 1").property("ADBE Vector Rect Size").expression = CALC + '[m/mpp,10];';
+        g().property("Rect 1").property("ADBE Vector Rect Position").expression = CALC + '[m/mpp/2,0];';
+        bar.property("ADBE Transform Group").property("ADBE Anchor Point").setValue([0, 0]);
+        bar.property("ADBE Transform Group").property("ADBE Position").setValue([Math.round(c.width * 0.05), Math.round(c.height * 0.92)]);
+
+        var tl = c.layers.addText("0 كم");
+        tl.name = "GEO Scale Text";
+        var tp = tl.property("ADBE Text Properties").property("ADBE Text Document");
+        var td = tp.value;
+        td.resetCharStyle();
+        td.fontSize = Math.round(c.height * 0.028);
+        try { td.font = J.font || "Al-Jazeera-Arabic-Bold"; } catch (e) {}
+        td.applyFill = true; td.fillColor = [1, 1, 1];
+        td.applyStroke = true; td.strokeColor = [0, 0, 0]; td.strokeWidth = 3; td.strokeOverFill = false;
+        td.justification = ParagraphJustification.LEFT_JUSTIFY;
+        tp.setValue(td);
+        tp.expression = CALC + '(m>=1000?(m/1000)+" كم":m+" م");';
+        tl.property("ADBE Transform Group").property("ADBE Position").expression =
+            'var b=thisComp.layer("GEO Scale Bar").transform.position.value;[b[0],b[1]-14];';
+        app.endUndoGroup();
+        return "OK|" + c.name;
+    } catch (e) { try { app.endUndoGroup(); } catch (e3) {} return geoErr("", e); }
+}
+
+// move the selected main-comp layers along a path drawn in the World comp (plane, car, dot...)
+// job: {compId, pathLayer, duration, orient}
+function geoAttachToPath(jobPath) {
+    try {
+        var J = geoReadJob(jobPath);
+        var M = geoMapFor(J), c = M.comp, world = geoWorldComp(c);
+        var src = null;
+        for (var i = 1; i <= world.numLayers; i++) if (world.layer(i).name === J.pathLayer) src = world.layer(i);
+        if (!src) return "ERR|لم أجد طبقة المسار «" + J.pathLayer + "» في كومب World";
+        var sel = c.selectedLayers, n = 0;
+        if (!sel.length) return "ERR|حدّد في AE الطبقة التي ستتحرك على المسار";
+        app.beginUndoGroup("GeoMotion: move along path");
+        var PATH = 'var W=thisComp.layer("GEO World");var S=W.source.layer("' + geoEsc(J.pathLayer) + '");' +
+            'var P=S.content("Feature").content("Path 1").path;var u=Math.max(0,Math.min(1,effect("Path Progress")(1).value/100));';
+        for (var k = 0; k < sel.length; k++) {
+            var L = sel[k];
+            if (!geoPinnable(L) || L.threeDLayer) continue;
+            var fx = function () { return L.property("ADBE Effect Parade"); };
+            if (!fx().property("Path Progress")) fx().addProperty("ADBE Slider Control").name = "Path Progress";
+            if (!fx().property("Path Rotate Offset")) fx().addProperty("ADBE Angle Control").name = "Path Rotate Offset";
+            var pp = fx().property("Path Progress").property(1);
+            while (pp.numKeys) pp.removeKey(1);
+            pp.setValueAtTime(c.time, 0);
+            pp.setValueAtTime(c.time + J.duration, 100);
+            geoEase(pp, 1); geoEase(pp, 2);
+            var tg = L.property("ADBE Transform Group");
+            tg.property("ADBE Position").expression = PATH +
+                'var q=P.pointOnPath(u);var r=W.toComp([q[0],q[1],0]);[r[0],r[1]];';
+            if (J.orient) {
+                tg.property("ADBE Rotate Z").expression = PATH +
+                    'var a=P.pointOnPath(Math.max(0,u-0.002)),b=P.pointOnPath(Math.min(1,u+0.002));' +
+                    'var A=W.toComp([a[0],a[1],0]),B=W.toComp([b[0],b[1],0]);' +
+                    'radiansToDegrees(Math.atan2(B[1]-A[1],B[0]-A[0]))+effect("Path Rotate Offset")(1).value;';
+            }
+            n++;
+        }
+        app.endUndoGroup();
+        return "OK|" + n;
     } catch (e) { try { app.endUndoGroup(); } catch (e3) {} return geoErr("", e); }
 }

@@ -68,7 +68,9 @@
   var UI_IDS = ['cw', 'ch', 'fps', 'dur', 'cname', 'quality', 'style', 'labels', 'outMode', 'details', 'customUrl', 'link', 'autoKey',
     'terrain', 'exag', 'hillshade', 'buildings3d', 'sky', 'customColors', 'colLand', 'colWater', 'colRoads', 'bakeBorders',
     'animDur', 'animPath', 'hold', 'keepTilt', 'arColor', 'arW', 'arBend', 'arDash', 'drawKind',
-    'circleKm', 'lblStyle', 'lblMarker', 'lblBox', 'moveType', 'moveAmt', 'moveDur', 'moveEase', 'vShake'];
+    'circleKm', 'lblStyle', 'lblMarker', 'lblBox', 'moveType', 'moveAmt', 'moveDur', 'moveEase', 'vShake',
+    'colBound', 'colLabel', 'climate', 'climateDate', 'climateOp', 'pickLevel', 'citiesMax', 'citiesTowns', 'routeMode',
+    'choroLow', 'choroHigh', 'choroFill', 'pathDur', 'pathOrient', 'waterMask'];
   function uiGet(id) { var el = $(id); return el.type === 'checkbox' ? el.checked : el.value; }
   function uiSet(id, v) { var el = $(id); if (!el) return; if (el.type === 'checkbox') el.checked = !!v; else el.value = v; }
   var stateFile = fs ? pathM.join(workDir('state'), 'features.json') : null;
@@ -122,8 +124,32 @@
     'esri-relief': { tiles: ESRI('World_Shaded_Relief'), max: 13, attr: '© Esri' },
     'esri-ocean': { tiles: ESRI('Ocean/World_Ocean_Base'), max: 13, attr: '© Esri, GEBCO, NOAA' },
     'esri-dark': { tiles: ESRI('Canvas/World_Dark_Gray_Base'), max: 16, attr: '© Esri' },
-    'esri-light': { tiles: ESRI('Canvas/World_Light_Gray_Base'), max: 16, attr: '© Esri' }
+    'esri-light': { tiles: ESRI('Canvas/World_Light_Gray_Base'), max: 16, attr: '© Esri' },
+    opentopo: { tiles: 'https://a.tile.opentopomap.org/{z}/{x}/{y}.png', max: 17,
+      attr: 'Map data © OpenStreetMap contributors, SRTM | Style © OpenTopoMap (CC-BY-SA)' },
+    nightlights: { tiles: 'https://gibs.earthdata.nasa.gov/wmts/epsg3857/best/VIIRS_Black_Marble/default/2016-01-01/GoogleMapsCompatible_Level8/{z}/{y}/{x}.png',
+      max: 8, attr: 'NASA Earth Observatory / GIBS — Black Marble' }
   };
+  // NASA GIBS daily layers (free, no key) + RainViewer radar
+  var GIBS = function (layer, ext, level) {
+    return 'https://gibs.earthdata.nasa.gov/wmts/epsg3857/best/' + layer + '/default/{date}/GoogleMapsCompatible_Level' + level + '/{z}/{y}/{x}.' + ext;
+  };
+  var CLIMATE = {
+    clouds: { url: GIBS('MODIS_Terra_CorrectedReflectance_TrueColor', 'jpg', 9), max: 9, attr: 'NASA GIBS — MODIS Terra' },
+    temp: { url: GIBS('MODIS_Terra_Land_Surface_Temp_Day', 'png', 7), max: 7, attr: 'NASA GIBS — MODIS Land Surface Temperature' },
+    precip: { url: GIBS('IMERG_Precipitation_Rate', 'png', 6), max: 6, attr: 'NASA GIBS — GPM IMERG' },
+    snow: { url: GIBS('MODIS_Terra_NDSI_Snow_Cover', 'png', 8), max: 8, attr: 'NASA GIBS — MODIS Snow Cover' },
+    night: { url: GIBS('VIIRS_Black_Marble', 'png', 8).replace('{date}', '2016-01-01'), max: 8, attr: 'NASA Black Marble' },
+    radar: { url: null, max: 7, attr: 'RainViewer' }
+  };
+  var radarUrl = null;
+  function refreshRadar() {
+    return fetchJSON('https://api.rainviewer.com/public/weather-maps.json').then(function (j) {
+      var past = j.radar && j.radar.past; if (!past || !past.length) throw new Error('no radar frames');
+      radarUrl = j.host + past[past.length - 1].path + '/256/{z}/{x}/{y}/2/1_1.png';
+    });
+  }
+  var TACTICAL = { land: '#07110d', water: '#041c1f', roads: '#173d2e', bound: '#39ff88', label: '#9dffcf' };
   var DEM_TILES = ['https://s3.amazonaws.com/elevation-tiles-prod/terrarium/{z}/{x}/{y}.png'];
   var styleCache = {};
 
@@ -145,7 +171,7 @@
           sources: { 'gm-raster': { type: 'raster', tiles: [r.tiles], tileSize: 256, maxzoom: r.max, attribution: r.attr },
                      openmaptiles: lib.sources.openmaptiles }, layers: layers };
       });
-    } else p = fetchJSON(OFM + '/styles/' + v);
+    } else p = fetchJSON(OFM + '/styles/' + (v === 'tactical' ? 'dark' : v));
     return p.then(function (spec) { if (v !== 'custom') styleCache[v] = spec; return JSON.parse(JSON.stringify(spec)); });
   }
 
@@ -170,17 +196,33 @@
   function getLook() {
     return {
       style: $('style').value, lang: $('labels').value, groups: groups(),
-      custom: $('customColors').checked, land: $('colLand').value, water: $('colWater').value, roads: $('colRoads').value,
+      custom: $('customColors').checked || $('style').value === 'tactical',
+      land: $('style').value === 'tactical' && !$('customColors').checked ? TACTICAL.land : $('colLand').value,
+      water: $('style').value === 'tactical' && !$('customColors').checked ? TACTICAL.water : $('colWater').value,
+      roads: $('style').value === 'tactical' && !$('customColors').checked ? TACTICAL.roads : $('colRoads').value,
+      bound: $('style').value === 'tactical' && !$('customColors').checked ? TACTICAL.bound : $('colBound').value,
+      label: $('style').value === 'tactical' && !$('customColors').checked ? TACTICAL.label : $('colLabel').value,
+      climate: $('climate').value, climateDate: $('climateDate').value, climateOp: Math.max(0, Math.min(100, parseFloat($('climateOp').value) || 75)) / 100,
       terrain: $('terrain').checked, exag: Math.max(0.1, parseFloat($('exag').value) || 1.5),
       hillshade: $('hillshade').checked, buildings3d: $('buildings3d').checked, sky: $('sky').checked
     };
   }
-  var DARK_STYLES = { dark: 1, fiord: 1, satellite: 1, hybrid: 1, sentinel: 1, 'esri-dark': 1 };
+  var DARK_STYLES = { dark: 1, fiord: 1, satellite: 1, hybrid: 1, sentinel: 1, 'esri-dark': 1, tactical: 1, nightlights: 1 };
 
   function applyLook(m, L, opts) {
     opts = opts || {};
     var style = m.getStyle();
     if (!style) return;
+    if (L.waterMask) {                       // white water on a transparent background, nothing else
+      style.layers.forEach(function (l) {
+        var sl = l['source-layer'], keep = (sl === 'water' && l.type === 'fill') || (sl === 'waterway' && l.type === 'line');
+        if (l.type === 'background') { m.setPaintProperty(l.id, 'background-opacity', 0); return; }
+        m.setLayoutProperty(l.id, 'visibility', keep ? 'visible' : 'none');
+        if (keep && l.type === 'fill') { m.setPaintProperty(l.id, 'fill-color', '#ffffff'); m.setPaintProperty(l.id, 'fill-opacity', 1); }
+        if (keep && l.type === 'line') m.setPaintProperty(l.id, 'line-color', '#ffffff');
+      });
+      return;
+    }
     var layers = style.layers || [];
     var firstSymbol = null;
     layers.forEach(function (l) { if (!firstSymbol && l.type === 'symbol') firstSymbol = l.id; });
@@ -200,6 +242,11 @@
         if (sl === 'water' && l.type === 'fill') m.setPaintProperty(l.id, 'fill-color', L.water);
         if (sl === 'waterway' && l.type === 'line') m.setPaintProperty(l.id, 'line-color', L.water);
         if (sl === 'transportation' && l.type === 'line') m.setPaintProperty(l.id, 'line-color', L.roads);
+        if (sl === 'boundary' && l.type === 'line') m.setPaintProperty(l.id, 'line-color', L.bound);
+        if (l.type === 'symbol' && l.layout && l.layout['text-field']) {
+          m.setPaintProperty(l.id, 'text-color', L.label);
+          m.setPaintProperty(l.id, 'text-halo-color', L.land);
+        }
         if ((sl === 'landcover' || sl === 'landuse' || sl === 'park') && l.type === 'fill') m.setPaintProperty(l.id, 'fill-opacity', 0.25);
       }
     });
@@ -222,6 +269,8 @@
           m.getLayer('gm-raster') ? undefined : (before || undefined));
       }
     } else if (m.getLayer('gm-hillshade')) m.removeLayer('gm-hillshade');
+
+    applyClimate(m, L, firstSymbol);
 
     var useTerrain = L.terrain && !opts.flat;
     if (useTerrain) {
@@ -261,7 +310,12 @@
   }
   map.on('style.load', function () { applyLook(map, getLook()); drawPreviewShapes(); drawDraft(); });
   setStyle();
-  function relook() { if (map.isStyleLoaded()) applyLook(map, getLook()); save(); }
+  // isStyleLoaded() is false while tiles are still loading: apply now if possible, otherwise once the map settles
+  function relook() {
+    var apply = function () { try { applyLook(map, getLook()); } catch (e) { log('الطبقات: ' + e.message, true); } };
+    if (map.isStyleLoaded()) apply(); else map.once('idle', apply);
+    save();
+  }
   $('style').onchange = function () { setStyle(); save(); };
   $('customUrl').onchange = function () { setStyle(); save(); };
   ['labels', 'customColors', 'colLand', 'colWater', 'colRoads'].forEach(function (id) {
@@ -589,6 +643,7 @@
   $('btnDraw').onclick = function () { setDrawing(!drawing); };
   map.on('click', function (e) {
     if (e.originalEvent.altKey) { lookupAt(e.lngLat); return; }
+    if (picking) { pickAt(e).catch(function (err) { log('التحديد: ' + err.message, true); }); return; }
     if (!drawing) return;
     draft.push([e.lngLat.lng, e.lngLat.lat]); drawDraft();
     var kind = $('drawKind').value;
@@ -835,9 +890,17 @@
       return { name: f.name, paths: paths, stroke: hexToRgb(f.color), strokeW: f.strokeW, fill: f.spotlight ? [0, 0, 0] : hexToRgb(f.color),
         fillOpacity: f.arrow ? 0 : f.fillOpacity, drawStart: 0, drawEnd: f.drawDur, glow: f.glow, dash: f.dash, blend: f.blend || 'NORMAL',
         opacity: f.opacity === undefined ? 100 : f.opacity, arrowHead: !!f.arrow, spotlight: !!f.spotlight && !f.arrow, flicker: !!f.flicker };
-    }).filter(function (x) { return x.paths.length; });
+    });
+    shapes.forEach(function (x, i) { x.fid = list[i].id; });
+    shapes = shapes.filter(function (x) { return x.paths.length; });
     var r = await host('geoAddShapes', { shapes: shapes, relative: true });
+    var names = String(r).split('|')[1];
+    if (names) names.split('\t').forEach(function (nm, i) {
+      var f = state.features.filter(function (x) { return x.id === shapes[i].fid; })[0]; if (f) f.aeName = nm;
+    });
+    r = String(r).split('|')[0];
     list.forEach(function (f) { f.drawStart = s.time; });
+    fillPathSelect();
     save();
     log('رُسم ' + r + ' معلم عند ' + s.time.toFixed(2) + 's (داخل كومب «' + s.name + ' World»)');
   }
@@ -996,6 +1059,13 @@
       }
     }
     plates = [plates[0]].concat(plates.slice(1).sort(function (a, b) { return a.zoom - b.zoom; }));
+    if (!opt.preview && $('waterMask').checked) {
+      log('قناع الماء…');
+      var mspec = await getStyleSpec('positron');
+      var wm = await renderPlate(mspec, Object.assign({}, look, { waterMask: true, terrain: false, hillshade: false, buildings3d: false, climate: 'none' }),
+        baseLL, plan.zb, plan.w, plan.h, dir, 'water_mask.png');
+      plates.push({ file: wm.file, x: bp[0], y: bp[1], w: plan.w, scale: 100 * Math.pow(2, S.zr - plan.zb), zoom: plan.zb, isBase: false, isMask: true });
+    }
     var res = await host('geoFinalize', { compId: S.compId, style: look.style, plates: plates, seq: null }, dir);
     log('تم ✔ ' + res);
   }
@@ -1180,7 +1250,251 @@
     });
   }
 
+  // ---------- climate overlay ----------
+  function climateTiles(L) {
+    var c = CLIMATE[L.climate];
+    if (!c) return null;
+    if (L.climate === 'radar') return radarUrl;
+    var d = L.climateDate || defaultClimateDate();
+    return c.url.replace('{date}', d);
+  }
+  function defaultClimateDate() { return new Date(Date.now() - 2 * 864e5).toISOString().slice(0, 10); }
+  function applyClimate(m, L, before) {
+    var url = L.climate && L.climate !== 'none' ? climateTiles(L) : null;
+    var src = m.getSource('gm-climate');
+    if (src && (!url || src._gmUrl !== url)) { if (m.getLayer('gm-climate')) m.removeLayer('gm-climate'); m.removeSource('gm-climate'); src = null; }
+    if (!url) return;
+    if (!src) {
+      m.addSource('gm-climate', { type: 'raster', tiles: [url], tileSize: 256, maxzoom: CLIMATE[L.climate].max, attribution: CLIMATE[L.climate].attr });
+      m.getSource('gm-climate')._gmUrl = url;
+      m.addLayer({ id: 'gm-climate', type: 'raster', source: 'gm-climate', paint: { 'raster-opacity': L.climateOp } }, before || undefined);
+    } else m.setPaintProperty('gm-climate', 'raster-opacity', L.climateOp);
+  }
+  if (!$('climateDate').value) $('climateDate').value = defaultClimateDate();
+  ['climate', 'climateDate', 'climateOp', 'colBound', 'colLabel'].forEach(function (id) {
+    $(id).addEventListener('change', function () {
+      var go = function () { if (/col/.test(id)) setStyle(); else relook(); save(); };
+      if (id === 'climate' && this.value === 'radar') refreshRadar().then(go).catch(function (e) { log('الرادار: ' + e.message, true); });
+      else go();
+    });
+  });
+  if ($('climate').value === 'radar') refreshRadar().then(relook).catch(function () {});
+
+  // ---------- one-click colours from an image ----------
+  $('paletteImg').onchange = function () {
+    var file = this.files[0]; if (!file) return;
+    var img = new Image();
+    img.onload = function () {
+      var cv = document.createElement('canvas'), n = 64; cv.width = n; cv.height = n;
+      var cx = cv.getContext('2d'); cx.drawImage(img, 0, 0, n, n);
+      var d = cx.getImageData(0, 0, n, n).data, px = [];
+      for (var i = 0; i < d.length; i += 4) if (d[i + 3] > 128) px.push([d[i], d[i + 1], d[i + 2]]);
+      var pal = kmeans(px, 6);
+      var lum = function (c) { return 0.2126 * c[0] + 0.7152 * c[1] + 0.0722 * c[2]; };
+      var sat = function (c) { var mx = Math.max.apply(null, c), mn = Math.min.apply(null, c); return mx ? (mx - mn) / mx : 0; };
+      var byLum = pal.slice().sort(function (a, b) { return lum(a) - lum(b); });
+      var accent = pal.slice().sort(function (a, b) { return sat(b) - sat(a); })[0];
+      var hex = function (c) { return '#' + c.map(function (v) { return ('0' + Math.round(v).toString(16)).slice(-2); }).join(''); };
+      $('colWater').value = hex(byLum[0]); $('colLand').value = hex(byLum[1]); $('colRoads').value = hex(byLum[3]);
+      $('colLabel').value = hex(byLum[byLum.length - 1]); $('colBound').value = hex(accent);
+      $('customColors').checked = true; updateHints(); setStyle(); save();
+      log('لُوّنت الخريطة من الصورة: ' + pal.map(hex).join(' '));
+      URL.revokeObjectURL(img.src);
+    };
+    img.src = URL.createObjectURL(file);
+    this.value = '';
+  };
+  function kmeans(px, k) {
+    if (!px.length) return [[30, 30, 30]];
+    var cent = [], i, j, it;
+    for (i = 0; i < k; i++) cent.push(px[Math.floor((i + 0.5) * px.length / k)].slice());
+    for (it = 0; it < 12; it++) {
+      var sum = cent.map(function () { return [0, 0, 0, 0]; });
+      for (i = 0; i < px.length; i++) {
+        var best = 0, bd = 1e12;
+        for (j = 0; j < k; j++) {
+          var dr = px[i][0] - cent[j][0], dg = px[i][1] - cent[j][1], db = px[i][2] - cent[j][2], dd = dr * dr + dg * dg + db * db;
+          if (dd < bd) { bd = dd; best = j; }
+        }
+        sum[best][0] += px[i][0]; sum[best][1] += px[i][1]; sum[best][2] += px[i][2]; sum[best][3]++;
+      }
+      for (j = 0; j < k; j++) if (sum[j][3]) cent[j] = [sum[j][0] / sum[j][3], sum[j][1] / sum[j][3], sum[j][2] / sum[j][3]];
+    }
+    return cent;
+  }
+
+  // ---------- select places by clicking the map ----------
+  var picking = false;
+  var NOM_ZOOM = { country: 3, state: 5, county: 8, city: 10, district: 14 };
+  function setPicking(on) {
+    picking = on; if (on && drawing) setDrawing(false);
+    $('btnPick').textContent = on ? 'إيقاف التحديد' : 'ابدأ التحديد';
+    $('map').classList.toggle('drawing', on);
+  }
+  $('btnPick').onclick = function () { setPicking(!picking); };
+  function placeLayerIds() {
+    var st = map.getStyle(); if (!st) return [];
+    return st.layers.filter(function (l) { return l['source-layer'] === 'place' && l.type === 'symbol' && map.getLayoutProperty(l.id, 'visibility') !== 'none'; })
+      .map(function (l) { return l.id; });
+  }
+  function placeName(p) { return ($('labels').value === 'ar' && p['name:ar']) || p['name:ar'] || p.name || p['name:latin'] || ''; }
+  async function pickAt(e) {
+    var level = $('pickLevel').value;
+    if (level === 'auto' || level === 'city') {
+      var ids = placeLayerIds();
+      if (ids.length) {
+        var bb = [[e.point.x - 10, e.point.y - 10], [e.point.x + 10, e.point.y + 10]];
+        var hits = map.queryRenderedFeatures(bb, { layers: ids });
+        if (hits.length && level === 'auto') {
+          var h = hits[0], nm = placeName(h.properties), c = h.geometry.coordinates;
+          addFeature(nm, { type: 'Point', coordinates: c }, c[0], c[1], { group: 'تحديد بالنقر', quiet: true });
+          renderFeatures(); drawPreviewShapes(); save(); log('حُدّدت المدينة: ' + nm); return;
+        }
+      }
+    }
+    var z = NOM_ZOOM[level] || 5;
+    log('…جارٍ تحديد ' + (level === 'auto' ? 'المنطقة' : $('pickLevel').selectedOptions[0].textContent));
+    var r = await nominatim('reverse?format=jsonv2&polygon_geojson=1&polygon_threshold=0.0003&addressdetails=1&accept-language=ar&zoom=' + z +
+      '&lat=' + e.lngLat.lat + '&lon=' + e.lngLat.lng);
+    if (!r || r.error) { log('لا يوجد شيء في هذه النقطة', true); return; }
+    var title = r.name || (r.display_name || '').split(',')[0];
+    var geom = r.geojson && r.geojson.type ? r.geojson : { type: 'Point', coordinates: [+r.lon, +r.lat] };
+    if (state.features.some(function (f) { return f.name === title && f.geom.type === geom.type; })) { log('«' + title + '» موجود أصلاً'); return; }
+    addFeature(title, geom, +r.lon, +r.lat, { group: 'تحديد بالنقر', quiet: true });
+    renderFeatures(); drawPreviewShapes(); save();
+    log('حُدّد: ' + title + ' (' + (r.addresstype || r.type) + ')');
+  }
+  // every city label visible on screen -> points in the browser
+  $('btnCities').onclick = function () {
+    var ids = placeLayerIds();
+    if (!ids.length) { log('لا توجد أسماء مدن ظاهرة: اختر نمطاً متجهاً أو «الهجين» وشغّل طبقة أسماء المدن.', true); return; }
+    var max = Math.max(1, parseInt($('citiesMax').value, 10) || 25), towns = $('citiesTowns').checked;
+    var classes = towns ? { city: 1, town: 1 } : { city: 1 };
+    var seen = {}, list = [];
+    map.queryRenderedFeatures({ layers: ids }).forEach(function (f) {
+      var p = f.properties, nm = placeName(p);
+      if (!classes[p.class] || !nm || seen[nm]) return;
+      seen[nm] = 1; list.push({ nm: nm, c: f.geometry.coordinates, rank: p.rank || 99 });
+    });
+    list.sort(function (a, b) { return a.rank - b.rank; });
+    list.slice(0, max).forEach(function (x) { addFeature(x.nm, { type: 'Point', coordinates: x.c }, x.c[0], x.c[1], { group: 'مدن الشاشة', quiet: true }); });
+    renderFeatures(); drawPreviewShapes(); save();
+    log('أُضيفت ' + Math.min(max, list.length) + ' مدينة من الشاشة (محددة): «أسماء للمحدد» يضعها كلها في AE');
+  };
+
+  // ---------- real routes (car / foot / bike) or a flight arc ----------
+  $('btnRoute').onclick = run('المسار', async function () {
+    var A = state.features.filter(function (f) { return f.id === $('arFrom').value; })[0];
+    var B = state.features.filter(function (f) { return f.id === $('arTo').value; })[0];
+    if (!A || !B || A === B) throw new Error('اختر مكانين مختلفين في «من / إلى»');
+    var mode = $('routeMode').value, geom, km;
+    if (mode === 'flight') {
+      var n = 64, pts = [];
+      for (var i = 0; i <= n; i++) pts.push(greatCircle([A.lng, A.lat], [B.lng, B.lat], i / n));
+      geom = { type: 'LineString', coordinates: pts }; km = G.haversineKm([A.lng, A.lat], [B.lng, B.lat]);
+    } else {
+      var prof = { car: 'routed-car', foot: 'routed-foot', bike: 'routed-bike' }[mode];
+      var url = 'https://routing.openstreetmap.de/' + prof + '/route/v1/driving/' + A.lng + ',' + A.lat + ';' + B.lng + ',' + B.lat +
+        '?overview=full&geometries=geojson';
+      var j = await fetchJSON(url);
+      if (!j.routes || !j.routes.length) throw new Error('لم يُعثر على طريق بين المكانين');
+      geom = j.routes[0].geometry; km = j.routes[0].distance / 1000;
+    }
+    var label = { car: 'طريق سيارة', foot: 'طريق مشي', bike: 'طريق دراجة', flight: 'رحلة جوية' }[mode];
+    addFeature(label + ': ' + A.name + ' ← ' + B.name, geom, undefined, undefined, { strokeW: 5 });
+    log(label + ' ' + Math.round(km) + ' كم أُضيف للمتصفح');
+  });
+  function greatCircle(a, b, f) {
+    var r = Math.PI / 180, la1 = a[1] * r, lo1 = a[0] * r, la2 = b[1] * r, lo2 = b[0] * r;
+    var d = 2 * Math.asin(Math.sqrt(Math.pow(Math.sin((la2 - la1) / 2), 2) + Math.cos(la1) * Math.cos(la2) * Math.pow(Math.sin((lo2 - lo1) / 2), 2)));
+    if (d < 1e-9) return a;
+    var A = Math.sin((1 - f) * d) / Math.sin(d), B = Math.sin(f * d) / Math.sin(d);
+    var x = A * Math.cos(la1) * Math.cos(lo1) + B * Math.cos(la2) * Math.cos(lo2);
+    var y = A * Math.cos(la1) * Math.sin(lo1) + B * Math.cos(la2) * Math.sin(lo2);
+    var z = A * Math.sin(la1) + B * Math.sin(la2);
+    return [Math.atan2(y, x) / r, Math.atan2(z, Math.sqrt(x * x + y * y)) / r];
+  }
+
+  // ---------- choropleth from CSV ----------
+  function normName(t) {
+    return String(t || '').toLowerCase().replace(/[\u064B-\u065F\u0670]/g, '').replace(/[أإآ]/g, 'ا').replace(/ة/g, 'ه').replace(/ى/g, 'ي')
+      .replace(/^(محافظة|ولاية|منطقة|إقليم|اقليم|مقاطعة|governorate of|province of)\s+/, '').replace(/\s+(governorate|province|state|region)$/, '')
+      .replace(/^ال/, '').replace(/[^\u0600-\u06FFa-z0-9]/g, '');
+  }
+  $('choroCsv').onchange = function () {
+    var file = this.files[0]; if (!file) return;
+    var rd = new FileReader();
+    rd.onload = function () {
+      var lines = rd.result.replace(/^\uFEFF/, '').split(/\r?\n/).filter(function (l) { return l.trim(); });
+      var sep = lines[0].indexOf('\t') >= 0 ? '\t' : (lines[0].split(';').length > lines[0].split(',').length ? ';' : ',');
+      var rows = lines.map(function (l) { return l.split(sep).map(function (c) { return c.trim().replace(/^"|"$/g, ''); }); });
+      if (isNaN(parseFloat(rows[0][1]))) rows.shift();                 // header
+      var data = {}, vals = [];
+      rows.forEach(function (r) { var v = parseFloat(r[1]); if (r[0] && !isNaN(v)) { data[normName(r[0])] = v; vals.push(v); } });
+      if (!vals.length) { log('CSV: لا توجد أرقام في العمود الثاني', true); return; }
+      var lo = Math.min.apply(null, vals), hi = Math.max.apply(null, vals);
+      var c0 = hexToRgb($('choroLow').value), c1 = hexToRgb($('choroHigh').value), fill = parseFloat($('choroFill').value) || 75, hit = 0;
+      state.features.forEach(function (f) {
+        var v = data[normName(f.name)];
+        if (v === undefined) return;
+        var u = hi > lo ? (v - lo) / (hi - lo) : 1;
+        var c = c0.map(function (a, i) { return a + (c1[i] - a) * u; });
+        f.color = '#' + c.map(function (x) { return ('0' + Math.round(x * 255).toString(16)).slice(-2); }).join('');
+        f.fillOpacity = fill; f.sel = true; f.value = v; hit++;
+      });
+      renderFeatures(); drawPreviewShapes(); save();
+      log('Choropleth: لُوّن ' + hit + ' من ' + vals.length + ' صف (من ' + lo + ' إلى ' + hi + '). المطابقة بالاسم؛ أضف المحافظات أولاً.');
+    };
+    rd.readAsText(file);
+    this.value = '';
+  };
+
+  // ---------- saved views (spatial bookmarks) ----------
+  var bmFile = fs ? pathM.join(workDir('state'), 'views.json') : null;
+  function loadBms() { try { return bmFile && fs.existsSync(bmFile) ? JSON.parse(fs.readFileSync(bmFile, 'utf8')) : JSON.parse(localStorage.getItem('geomotion.views') || '[]'); } catch (e) { return []; } }
+  function saveBms(l) { var t = JSON.stringify(l); if (bmFile) fs.writeFileSync(bmFile, t, 'utf8'); else { try { localStorage.setItem('geomotion.views', t); } catch (e) {} } }
+  function renderBms() {
+    var ul = $('bms'), list = loadBms(); ul.innerHTML = list.length ? '' : '<li class="hint">لا توجد زوايا محفوظة</li>';
+    list.forEach(function (v, i) {
+      var li = document.createElement('li');
+      li.innerHTML = '<div class="feat"><span class="nm"></span><button class="mini go">اذهب</button><button class="mini key">◆ كيفريم</button><button class="mini del">×</button></div>';
+      li.querySelector('.nm').textContent = v.name;
+      li.querySelector('.go').onclick = function () { map.jumpTo({ center: [v.lng, v.lat], zoom: v.zoom - dz(), bearing: v.bearing, pitch: v.pitch }); setRoll(v.roll || 0); };
+      li.querySelector('.key').onclick = run('كيفريم', async function () {
+        await poll(); needMap(); await host('geoSetKeys', { keys: [Object.assign({ t: -1 }, v)] }); log('◆ «' + v.name + '» عند ' + aeState.time.toFixed(2) + 's');
+      });
+      li.querySelector('.del').onclick = function () { var l = loadBms(); l.splice(i, 1); saveBms(l); renderBms(); };
+      ul.appendChild(li);
+    });
+  }
+  $('btnBm').onclick = function () {
+    var v = captureView(); v.name = $('bmName').value.trim() || ('زاوية ' + (loadBms().length + 1));
+    var l = loadBms(); l.push(v); saveBms(l); renderBms(); $('bmName').value = ''; log('حُفظت الزاوية «' + v.name + '»');
+  };
+
+  // ---------- AE tools: scale bar, move a layer along a drawn path ----------
+  $('btnScaleBar').onclick = run('مقياس الرسم', async function () {
+    await poll(); needMap();
+    var r = await host('geoAddScaleBar', { font: FONT });
+    log('أُضيف مقياس رسم يتغير مع الزوم (' + r + ')');
+  });
+  function fillPathSelect() {
+    var sel = $('pathFeat'), cur = sel.value; sel.innerHTML = '';
+    state.features.filter(function (f) { return f.aeName && f.geom.type !== 'Point'; }).forEach(function (f) {
+      var o = document.createElement('option'); o.value = f.id; o.textContent = f.name; sel.appendChild(o);
+    });
+    if (cur) sel.value = cur;
+  }
+  $('btnOnPath').onclick = run('على المسار', async function () {
+    await poll(); needMap();
+    var f = state.features.filter(function (x) { return x.id === $('pathFeat').value; })[0];
+    if (!f) throw new Error('ارسم خطاً أو سهماً أو مساراً في AE أولاً، ثم اختره هنا');
+    var r = await host('geoAttachToPath', { pathLayer: f.aeName, duration: Math.max(0.2, parseFloat($('pathDur').value) || 4), orient: $('pathOrient').checked });
+    log('تتحرك ' + r + ' طبقة على «' + f.name + '» من رأس التشغيل');
+  });
+
   // ---------- init ----------
+  renderBms(); fillPathSelect();
   renderFeatures(); renderFavs(); hud(); syncFields(); updateHints(); moveHint(); $('curStyle').textContent = styleName();
   if (inCEP) evalScript('geoPing()').then(function (r) { log('After Effects ' + String(r).replace('OK|', '')); });
   else log('وضع معاينة المتصفح: أوامر AE تعمل فقط داخل After Effects');
